@@ -4,7 +4,7 @@
 -- ============================================================
 
 -- Settings
-update settings set camp_name = 'Pinewood Camp', low_stock = 10 where id = true;
+update settings set camp_name = 'Camp Lawroweld', low_stock = 10 where id = true;
 
 -- A few products (merch tracks quantity, food does not) ------
 insert into products (name, category, price, track_quantity, quantity) values

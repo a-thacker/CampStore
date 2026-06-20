@@ -17,6 +17,7 @@ create table products (
   track_quantity  boolean not null default true,   -- false for food/snacks
   quantity        integer,                          -- null when not tracked
   active          boolean not null default true,    -- archived = false
+  image_url       text,                              -- product photo (Supabase Storage public URL)
   square_catalog_id text,                            -- optional Square catalog link
   created_at      timestamptz not null default now()
 );
@@ -135,3 +136,23 @@ begin
       'create policy "staff full access" on %I for all to authenticated using (true) with check (true);', t);
   end loop;
 end $$;
+
+-- ============================================================
+--  STORAGE  — product photos uploaded from the Stock Station
+--  Public bucket so <img src> works; only authenticated staff write.
+-- ============================================================
+insert into storage.buckets (id, name, public)
+values ('product-images', 'product-images', true)
+on conflict (id) do nothing;
+
+create policy "public read product images"
+  on storage.objects for select
+  using (bucket_id = 'product-images');
+
+create policy "staff upload product images"
+  on storage.objects for insert to authenticated
+  with check (bucket_id = 'product-images');
+
+create policy "staff update product images"
+  on storage.objects for update to authenticated
+  using (bucket_id = 'product-images');

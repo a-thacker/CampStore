@@ -64,7 +64,8 @@ export function RegisterView({ db, api, week, toast }) {
             const out = p.trackQuantity && p.quantity <= 0;
             const low = p.trackQuantity && p.quantity > 0 && p.quantity <= db.settings.lowStock;
             return (
-              <button key={p.id} className={'prod' + (out ? ' out' : '')} onClick={() => add(p)} disabled={out}>
+              <button key={p.id} className={'prod' + (out ? ' out' : '') + (p.image ? ' has-photo' : '')} onClick={() => add(p)} disabled={out}>
+                {p.image && <div className="prod-thumb"><img src={p.image} alt="" /></div>}
                 <div className="prod-top">
                   <span className="prod-name">{p.name}</span>
                   {out ? <Badge kind="out">Out</Badge> : low ? <Badge kind="low">{p.quantity} left</Badge> : null}

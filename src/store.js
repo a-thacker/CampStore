@@ -5,7 +5,7 @@ import { supabase } from './lib/supabase.js';
 const mapProduct = (r) => ({
   id: r.id, name: r.name, category: r.category, price: Number(r.price),
   trackQuantity: r.track_quantity, quantity: r.quantity, active: r.active,
-  squareCatalogId: r.square_catalog_id,
+  image: r.image_url, squareCatalogId: r.square_catalog_id,
 });
 const mapWeek = (r) => ({
   id: r.id, name: r.name, type: r.type, start: r.start_date, end: r.end_date, order: r.sort_order,
@@ -106,6 +106,17 @@ export function useStore(session) {
     }).eq('id', id)),
     archiveProduct: (id) => after(supabase.from('products').update({ active: false }).eq('id', id)),
     adjustStock: (id, quantity) => after(supabase.from('products').update({ quantity }).eq('id', id)),
+    setTracking: (id, on, quantity = 0) => after(supabase.from('products')
+      .update({ track_quantity: on, quantity: on ? quantity : null }).eq('id', id)),
+    // upload a (downscaled) image blob to Storage, save its public URL on the product
+    uploadProductImage: async (productId, blob) => {
+      const path = `${productId}-${Date.now()}.jpg`;
+      const up = await supabase.storage.from('product-images')
+        .upload(path, blob, { contentType: 'image/jpeg', upsert: true });
+      if (up.error) throw new Error(up.error.message);
+      const { data } = supabase.storage.from('product-images').getPublicUrl(path);
+      return after(supabase.from('products').update({ image_url: data.publicUrl }).eq('id', productId));
+    },
 
     /* ----- weeks ----- */
     addWeek: async ({ name, type }) => {

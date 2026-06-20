@@ -68,6 +68,17 @@ Because the rules are enforced in the database, a second register (or a bug in t
 
 ---
 
+## Stock Station (`/stock`)
+
+A phone-first, foolproof page for updating inventory — make a QR code that points at `https://YOUR-SITE.netlify.app/stock`.
+
+- Big **− / +** buttons and tap-to-set counts for every merch item; **photo upload** per item (camera or library).
+- Photos upload to a Supabase **Storage** bucket (`product-images`) created by `schema.sql`; the public URL is saved on the product and shows in the register too.
+- It uses the same staff login — sign in once and the session persists, so the QR just opens the board.
+- Routing is path-based (`src/main.jsx`): `/stock` renders the station, everything else renders the register. Netlify's SPA redirect makes the deep link work.
+
+> After running `schema.sql`, confirm **Storage → product-images** exists and is public (Supabase dashboard).
+
 ## Notes & next steps
 - **RLS** currently grants any signed-in user full access (right for one shared camp login). For per-staff attribution or an admin-only area, see `../Camp Store — Real Build Handoff/INTEGRATION.md` §5.
 - **Card refunds**: `process_return` reverses the ledger; to also refund the card in Square, call `/.netlify/functions/square-refund` with the sale's `square_payment_id` when its method was `card`.

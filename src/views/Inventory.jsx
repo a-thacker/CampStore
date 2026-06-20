@@ -38,6 +38,7 @@ export function InventoryView({ db, api, toast }) {
         <div style={{ flex: 1, maxWidth: 340 }}><Search value={q} onChange={setQ} placeholder="Search products…" /></div>
         <div style={{ flex: 1 }} />
         {lowCount > 0 && <Badge kind="low"><Icon name="alert" size={13} /> {lowCount} low stock</Badge>}
+        <a className="btn" href="/stock" target="_blank" rel="noopener"><Icon name="camera" size={17} /> Stock Station</a>
         <button className="btn primary" onClick={() => setEditing({ category: cat, trackQuantity: cat === 'merch', price: '', name: '', quantity: 0 })}>
           <Icon name="plus" size={18} /> Add product
         </button>
