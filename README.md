@@ -80,8 +80,10 @@ A phone-first, foolproof page for updating inventory — make a QR code that poi
 > After running `schema.sql`, confirm **Storage → product-images** exists and is public (Supabase dashboard).
 
 ## Notes & next steps
+- **Payment endpoint security**: `square-payment` and `square-refund` both (1) require the caller's Supabase session JWT — anonymous requests are rejected, (2) only answer the origin(s) in `ALLOWED_ORIGINS`, and (3) compute the charge/refund amount **server-side** (charge = live DB prices for the cart; refund = the recorded sale total) so a tampered client can't set the dollar amount. They need `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` (service-role key, server-only) in addition to the Square vars.
+- **Admin-only refunds (optional)**: set `REFUND_ADMIN_ONLY=true` and give trusted users `app_metadata.role='admin'` in Supabase to restrict refunds.
 - **RLS** currently grants any signed-in user full access (right for one shared camp login). For per-staff attribution or an admin-only area, see `../Camp Store — Real Build Handoff/INTEGRATION.md` §5.
-- **Card refunds**: `process_return` reverses the ledger; to also refund the card in Square, call `/.netlify/functions/square-refund` with the sale's `square_payment_id` when its method was `card`.
+- **Card refunds**: `process_return` reverses the ledger; to also refund the card in Square, call `refundCard(square_payment_id)` (from `src/lib/square.js`) when the original method was `card`. The endpoint is hardened; wiring it into the return flow is a one-liner in `Campers.jsx`.
 - **Realtime** (two registers at once): subscribe to `transactions`/`products` changes and call `api.reload()` — snippet in INTEGRATION.md §6.
 
 > I built and statically verified the module structure here; it needs **your** Supabase + Square keys to run, so plug those into `.env` first.

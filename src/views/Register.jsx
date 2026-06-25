@@ -11,6 +11,7 @@ export function RegisterView({ db, api, week, toast }) {
   const [payerId, setPayerId] = useState(null); // camper id OR tab id
   const [pickOpen, setPickOpen] = useState(false);
   const [checkout, setCheckout] = useState(false);
+  const [sizeFor, setSizeFor] = useState(null); // product awaiting a size choice
 
   // reset payer/cart when week changes
   useEffect(() => { setCart([]); setPayerId(null); }, [week && week.id]);
@@ -29,21 +30,27 @@ export function RegisterView({ db, api, week, toast }) {
     return null;
   }, [payerId, db]);
 
-  function add(p) {
-    if (p.trackQuantity && p.quantity <= 0) { toast(p.name + ' is out of stock'); return; }
+  function onProductClick(p) {
+    if (Store.isSized(p)) { setSizeFor(p); return; }
+    add(p);
+  }
+  function add(p, size) {
+    const avail = !p.trackQuantity ? Infinity : (size ? size.quantity : p.quantity);
+    if (p.trackQuantity && avail <= 0) { toast(p.name + (size ? ' (' + size.label + ')' : '') + ' is out of stock'); return; }
+    const key = p.id + '|' + (size ? size.id : '');
     setCart((c) => {
-      const ex = c.find((l) => l.productId === p.id);
+      const ex = c.find((l) => l.key === key);
       if (ex) {
-        if (p.trackQuantity && ex.qty >= p.quantity) { toast('Only ' + p.quantity + ' in stock'); return c; }
-        return c.map((l) => l.productId === p.id ? { ...l, qty: l.qty + 1 } : l);
+        if (p.trackQuantity && ex.qty >= avail) { toast('Only ' + avail + ' in stock' + (size ? ' · ' + size.label : '')); return c; }
+        return c.map((l) => l.key === key ? { ...l, qty: l.qty + 1 } : l);
       }
-      return [...c, { productId: p.id, name: p.name, category: p.category, unitPrice: p.price, qty: 1, trackQuantity: p.trackQuantity }];
+      return [...c, { key, productId: p.id, sizeId: size ? size.id : null, sizeLabel: size ? size.label : null, name: p.name, category: p.category, unitPrice: p.price, qty: 1, trackQuantity: p.trackQuantity }];
     });
   }
-  function setQty(pid, d) {
-    setCart((c) => c.map((l) => l.productId === pid ? { ...l, qty: Math.max(0, l.qty + d) } : l).filter((l) => l.qty > 0));
+  function setQty(key, d) {
+    setCart((c) => c.map((l) => l.key === key ? { ...l, qty: Math.max(0, l.qty + d) } : l).filter((l) => l.qty > 0));
   }
-  function removeLine(pid) { setCart((c) => c.filter((l) => l.productId !== pid)); }
+  function removeLine(key) { setCart((c) => c.filter((l) => l.key !== key)); }
 
   const subtotal = +cart.reduce((s, l) => s + l.unitPrice * l.qty, 0).toFixed(2);
   const count = cart.reduce((s, l) => s + l.qty, 0);
@@ -61,14 +68,15 @@ export function RegisterView({ db, api, week, toast }) {
         </div>
         <div className="prod-grid">
           {products.map((p) => {
+            const sized = Store.isSized(p);
             const out = p.trackQuantity && p.quantity <= 0;
             const low = p.trackQuantity && p.quantity > 0 && p.quantity <= db.settings.lowStock;
             return (
-              <button key={p.id} className={'prod' + (out ? ' out' : '') + (p.image ? ' has-photo' : '')} onClick={() => add(p)} disabled={out}>
+              <button key={p.id} className={'prod' + (out ? ' out' : '') + (p.image ? ' has-photo' : '')} onClick={() => onProductClick(p)} disabled={out}>
                 {p.image && <div className="prod-thumb"><img src={p.image} alt="" /></div>}
                 <div className="prod-top">
                   <span className="prod-name">{p.name}</span>
-                  {out ? <Badge kind="out">Out</Badge> : low ? <Badge kind="low">{p.quantity} left</Badge> : null}
+                  {out ? <Badge kind="out">Out</Badge> : low ? <Badge kind="low">{p.quantity} left</Badge> : sized ? <Badge kind="muted">Sizes</Badge> : null}
                 </div>
                 <div className="prod-bottom">
                   <span className="prod-price tnum">{Store.money(p.price)}</span>
@@ -120,15 +128,15 @@ export function RegisterView({ db, api, week, toast }) {
           {cart.length === 0 ? (
             <EmptyState icon="register" title="Cart is empty" sub="Tap products to add them." />
           ) : cart.map((l) => (
-            <div key={l.productId} className="cart-line">
+            <div key={l.key} className="cart-line">
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="cart-line-name">{l.name}</div>
+                <div className="cart-line-name">{l.name}{l.sizeLabel && <span className="cart-line-size">{l.sizeLabel}</span>}</div>
                 <div className="cart-line-price tnum muted">{Store.money(l.unitPrice)} each</div>
               </div>
               <div className="qty-ctrl">
-                <button onClick={() => setQty(l.productId, -1)}><Icon name="minus" size={15} /></button>
+                <button onClick={() => setQty(l.key, -1)}><Icon name="minus" size={15} /></button>
                 <span className="tnum">{l.qty}</span>
-                <button onClick={() => setQty(l.productId, +1)}><Icon name="plus" size={15} /></button>
+                <button onClick={() => setQty(l.key, +1)}><Icon name="plus" size={15} /></button>
               </div>
               <div className="cart-line-total tnum">{Store.money(l.unitPrice * l.qty)}</div>
             </div>
@@ -150,12 +158,34 @@ export function RegisterView({ db, api, week, toast }) {
       {pickOpen && (
         <PayerPicker db={db} week={week} onPick={(id) => { setPayerId(id); setPickOpen(false); }} onClose={() => setPickOpen(false)} />
       )}
+      {sizeFor && (
+        <SizePicker product={sizeFor} onPick={(z) => { add(sizeFor, z); setSizeFor(null); }} onClose={() => setSizeFor(null)} />
+      )}
       {checkout && payer && (
         <CheckoutModal db={db} api={api} week={week} payer={payer} cart={cart} subtotal={subtotal} toast={toast}
           onClose={() => setCheckout(false)}
           onDone={() => { setCheckout(false); setCart([]); toast('Sale complete'); }} />
       )}
     </div>
+  );
+}
+
+/* ---- size picker ---- */
+function SizePicker({ product, onPick, onClose }) {
+  return (
+    <Modal title={product.name + ' · pick a size'} onClose={onClose}>
+      <div className="size-pick-grid">
+        {product.sizes.map((z) => {
+          const out = z.quantity <= 0;
+          return (
+            <button key={z.id} className={'size-pick' + (out ? ' out' : '')} disabled={out} onClick={() => onPick(z)}>
+              <span className="size-pick-label">{z.label}</span>
+              <span className="size-pick-qty tnum">{out ? 'Out' : z.quantity + ' left'}</span>
+            </button>
+          );
+        })}
+      </div>
+    </Modal>
   );
 }
 
@@ -247,7 +277,7 @@ function CheckoutModal({ db, api, week, payer, cart, subtotal, toast, onClose, o
         if (!hasSquare) throw new Error('Square is not configured');
         if (!cardInst.current) throw new Error('Card form not ready');
         const note = (isTab ? payer.name : payer.first + ' ' + payer.last) + ' · ' + week.name;
-        ({ paymentId: squarePaymentId } = await chargeCard(cardInst.current, Math.round(subtotal * 100), note));
+        ({ paymentId: squarePaymentId } = await chargeCard(cardInst.current, { cart, note }));
       }
       await api.recordSale({
         weekId: week.id, payerType: payer.kind, payerId: payer.id,

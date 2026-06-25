@@ -18,6 +18,7 @@ create table products (
   quantity        integer,                          -- null when not tracked
   active          boolean not null default true,    -- archived = false
   image_url       text,                              -- product photo (Supabase Storage public URL)
+  sizes           jsonb,                             -- [{id,label,quantity}] when sized; null = no sizes
   square_catalog_id text,                            -- optional Square catalog link
   created_at      timestamptz not null default now()
 );

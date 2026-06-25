@@ -1,24 +1,32 @@
 /**
- * Netlify Function — Square card charge
+ * Netlify Function — Square card charge  (HARDENED)
  * ----------------------------------------------------------------
  * POST /.netlify/functions/square-payment
- * Body: { sourceId: string, amountCents: number, note?: string }
+ * Headers: Authorization: Bearer <supabase access token>
+ * Body:    { items: [{ product_id, size_id?, qty }], note?: string }
  *
- * The browser tokenizes the card with Square's Web Payments SDK and
- * sends only the one-time `sourceId` here. The SECRET access token
- * never leaves the server. On success we return { paymentId } and the
- * front-end then records the sale via the Supabase `record_sale` RPC
- * with method='card' and square_payment_id=paymentId.
+ * Security model
+ *  - The browser tokenizes the card with Square's Web Payments SDK and
+ *    sends ONLY the one-time `sourceId` here — never the card number.
+ *  - The caller MUST be a signed-in staff member: we verify their
+ *    Supabase JWT before doing anything.
+ *  - The amount is NOT trusted from the client. We recompute the total
+ *    server-side from current `products.price` rows (service-role read),
+ *    so a tampered browser can't charge $0.01 for a $40 cart.
+ *  - Only the allowlisted site origin(s) may call this.
+ *  - The SECRET access token never leaves the server.
  *
  * Requires (Netlify env vars):
- *   SQUARE_ACCESS_TOKEN   — secret token (sandbox or production)
- *   SQUARE_LOCATION_ID    — your Square location
- *   SQUARE_ENVIRONMENT    — 'sandbox' | 'production'
- *
- * Install: npm i square
+ *   SQUARE_ACCESS_TOKEN          — secret token (sandbox or production)
+ *   SQUARE_LOCATION_ID           — your Square location
+ *   SQUARE_ENVIRONMENT           — 'sandbox' | 'production'
+ *   SUPABASE_URL                 — your project URL
+ *   SUPABASE_SERVICE_ROLE_KEY    — service-role key (SECRET, server only)
+ *   ALLOWED_ORIGINS              — comma-separated site origins
  */
 const { Client, Environment } = require('square');
 const { randomUUID } = require('crypto');
+const { requireUser, originAllowed, adminClient, json } = require('./lib/guard');
 
 const client = new Client({
   accessToken: process.env.SQUARE_ACCESS_TOKEN,
@@ -29,56 +37,81 @@ const client = new Client({
 });
 
 exports.handler = async (event) => {
-  if (event.httpMethod !== 'POST') {
-    return json(405, { error: 'Method not allowed' });
-  }
+  if (event.httpMethod === 'OPTIONS') return json(204, {}, event);
+  if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' }, event);
+  if (!originAllowed(event)) return json(403, { error: 'Origin not allowed' }, event);
 
+  // 1) must be a signed-in staff member
+  const { user, error: authErr } = await requireUser(event);
+  if (authErr) return json(401, { error: authErr }, event);
+
+  // 2) parse
   let body;
   try {
     body = JSON.parse(event.body || '{}');
   } catch {
-    return json(400, { error: 'Invalid JSON' });
+    return json(400, { error: 'Invalid JSON' }, event);
+  }
+  const { sourceId, items, note } = body;
+  if (!sourceId) return json(400, { error: 'sourceId is required' }, event);
+  if (!Array.isArray(items) || items.length === 0) {
+    return json(400, { error: 'items[] is required' }, event);
   }
 
-  const { sourceId, amountCents, note } = body;
-  if (!sourceId || !Number.isInteger(amountCents) || amountCents <= 0) {
-    return json(400, { error: 'sourceId and a positive integer amountCents are required' });
+  // 3) authoritative server-side pricing (ignore any client-sent amount)
+  let amountCents;
+  try {
+    amountCents = await priceCart(items);
+  } catch (e) {
+    return json(400, { error: e.message }, event);
+  }
+  if (!Number.isInteger(amountCents) || amountCents <= 0) {
+    return json(400, { error: 'Computed total is invalid' }, event);
   }
 
+  // 4) charge
   try {
     const { result } = await client.paymentsApi.createPayment({
       sourceId,
-      idempotencyKey: randomUUID(),       // prevents accidental double-charges
-      amountMoney: {
-        amount: BigInt(amountCents),       // cents, e.g. $18.00 -> 1800
-        currency: 'USD',
-      },
+      idempotencyKey: randomUUID(), // prevents accidental double-charges
+      amountMoney: { amount: BigInt(amountCents), currency: 'USD' },
       locationId: process.env.SQUARE_LOCATION_ID,
       note: note ? String(note).slice(0, 500) : 'Camp Store sale',
     });
-
     return json(200, {
       paymentId: result.payment.id,
-      status: result.payment.status,      // 'COMPLETED'
-    });
+      status: result.payment.status, // 'COMPLETED'
+      amountCents,                    // authoritative amount actually charged
+    }, event);
   } catch (err) {
     const detail = err?.errors?.[0]?.detail || err.message || 'Payment failed';
-    return json(402, { error: detail });
+    return json(402, { error: detail }, event);
   }
 };
 
-// BigInt-safe JSON response helper
-function json(statusCode, obj) {
-  return {
-    statusCode,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(obj, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)),
-  };
-}
+/**
+ * Recompute the cart total in cents from live DB prices.
+ * Throws on unknown/inactive products or bad quantities.
+ */
+async function priceCart(items) {
+  const ids = [...new Set(items.map((i) => i.product_id).filter(Boolean))];
+  if (ids.length === 0) throw new Error('No valid products in cart');
 
-/* ----------------------------------------------------------------
- * REFUNDS (for returning a card sale): create a sibling function
- * `square-refund.js` calling client.refundsApi.refundPayment({
- *   idempotencyKey, paymentId, amountMoney:{ amount, currency:'USD' }
- * }). Trigger it from process_return when the original method=card.
- * ---------------------------------------------------------------- */
+  const { data, error } = await adminClient()
+    .from('products')
+    .select('id, price, active')
+    .in('id', ids);
+  if (error) throw new Error('Could not price cart');
+
+  const byId = new Map((data || []).map((p) => [p.id, p]));
+  let cents = 0;
+  for (const line of items) {
+    const p = byId.get(line.product_id);
+    if (!p) throw new Error('Unknown product in cart');
+    if (p.active === false) throw new Error('Inactive product in cart');
+    const qty = Number(line.qty);
+    if (!Number.isInteger(qty) || qty <= 0) throw new Error('Invalid quantity');
+    cents += Math.round(Number(p.price) * 100) * qty;
+  }
+  return cents;
+}

@@ -50,14 +50,15 @@ export function InventoryView({ db, api, toast }) {
             <tr>
               <th>Product</th>
               <th className="right">Price</th>
-              {cat === 'merch' && <th className="right" style={{ width: 200 }}>In stock</th>}
+              {cat === 'merch' && <th className="right" style={{ width: 260 }}>In stock</th>}
               <th style={{ width: 60 }}></th>
             </tr>
           </thead>
           <tbody>
             {list.map((p) => {
-              const out = p.trackQuantity && p.quantity <= 0;
-              const low = p.trackQuantity && p.quantity > 0 && p.quantity <= db.settings.lowStock;
+              const total = Store.totalQty(p);
+              const out = p.trackQuantity && total <= 0;
+              const low = p.trackQuantity && total > 0 && total <= db.settings.lowStock;
               return (
                 <tr key={p.id} className={p.active ? '' : 'archived'}>
                   <td>
@@ -72,11 +73,20 @@ export function InventoryView({ db, api, toast }) {
                   {cat === 'merch' && (
                     <td className="right">
                       {p.trackQuantity ? (
-                        <div className="qty-inline">
-                          <button onClick={() => adjustQty(p, -1)}><Icon name="minus" size={14} /></button>
-                          <span className="tnum" style={{ color: out ? 'var(--red)' : low ? 'var(--amber)' : 'var(--ink)' }}>{p.quantity}</span>
-                          <button onClick={() => adjustQty(p, +1)}><Icon name="plus" size={14} /></button>
-                        </div>
+                        Store.isSized(p) ? (
+                          <div className="inv-sized">
+                            <span className="tnum inv-sized-total" style={{ color: out ? 'var(--red)' : low ? 'var(--amber)' : 'var(--ink)' }}>{total}</span>
+                            <span className="inv-sized-pills">
+                              {p.sizes.map((z) => <span key={z.id} className={'sz-pill' + (z.quantity <= 0 ? ' empty' : '')}><b>{z.label}</b><span className="tnum">{z.quantity}</span></span>)}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="qty-inline">
+                            <button onClick={() => adjustQty(p, -1)}><Icon name="minus" size={14} /></button>
+                            <span className="tnum" style={{ color: out ? 'var(--red)' : low ? 'var(--amber)' : 'var(--ink)' }}>{p.quantity}</span>
+                            <button onClick={() => adjustQty(p, +1)}><Icon name="plus" size={14} /></button>
+                          </div>
+                        )
                       ) : <span className="muted">—</span>}
                     </td>
                   )}
@@ -97,19 +107,34 @@ export function InventoryView({ db, api, toast }) {
 }
 
 function ProductModal({ product, onSave, onArchive, onClose }) {
+  const uid = (p) => p + '_' + Math.random().toString(36).slice(2, 9);
   const [name, setName] = useState(product.name || '');
   const [price, setPrice] = useState(product.price === '' ? '' : String(product.price));
   const [category, setCategory] = useState(product.category || 'merch');
   const [trackQuantity, setTrack] = useState(product.trackQuantity ?? (category === 'merch'));
   const [quantity, setQuantity] = useState(String(product.quantity ?? 0));
+  const [sized, setSized] = useState(Store.isSized(product));
+  const [sizes, setSizes] = useState(() => (product.sizes || []).map((z) => ({ ...z })));
   const isNew = !product.id;
 
-  const valid = name.trim() && price !== '' && !isNaN(+price) && +price >= 0;
+  const COMMON = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'One Size'];
+  const used = sizes.map((z) => z.label.trim().toLowerCase());
+  function addSize(label) { setSizes((s) => [...s, { id: uid('size'), label: label || '', quantity: 0 }]); }
+  function removeSize(id) { setSizes((s) => s.filter((z) => z.id !== id)); }
+  function patchSize(id, patch) { setSizes((s) => s.map((z) => z.id === id ? { ...z, ...patch } : z)); }
+
+  const sizesValid = !sized || (sizes.length > 0 && sizes.every((z) => z.label.trim()));
+  const valid = name.trim() && price !== '' && !isNaN(+price) && +price >= 0 && sizesValid;
+  const sizedTotal = sizes.reduce((s, z) => s + (parseInt(z.quantity) || 0), 0);
 
   function submit() {
+    const cleanSizes = (trackQuantity && sized)
+      ? sizes.map((z) => ({ id: z.id || uid('size'), label: z.label.trim(), quantity: Math.max(0, parseInt(z.quantity) || 0) }))
+      : null;
     onSave({
-      id: product.id, name: name.trim(), price: +(+price).toFixed(2), category,
-      trackQuantity, quantity: trackQuantity ? Math.max(0, parseInt(quantity || '0')) : null,
+      id: product.id, name: name.trim(), price: +(+price).toFixed(2), category, trackQuantity,
+      quantity: trackQuantity ? (cleanSizes ? cleanSizes.reduce((s, z) => s + z.quantity, 0) : Math.max(0, parseInt(quantity || '0'))) : null,
+      sizes: cleanSizes,
     });
   }
 
@@ -131,21 +156,54 @@ function ProductModal({ product, onSave, onArchive, onClose }) {
           </div>
         </Field>
         <Field label="Category">
-          <select className="select" value={category} onChange={(e) => { setCategory(e.target.value); if (e.target.value === 'food') setTrack(false); }}>
+          <select className="select" value={category} onChange={(e) => { setCategory(e.target.value); if (e.target.value === 'food') { setTrack(false); setSized(false); } }}>
             <option value="merch">Merch</option>
             <option value="food">Food &amp; Snacks</option>
           </select>
         </Field>
       </div>
       <div style={{ padding: '4px 2px' }}>
-        <Toggle checked={trackQuantity} onChange={setTrack} label="Track inventory quantity" />
+        <Toggle checked={trackQuantity} onChange={(v) => { setTrack(v); if (!v) setSized(false); }} label="Track inventory quantity" />
         <div className="muted" style={{ fontSize: 12.5, marginTop: 6, lineHeight: 1.4 }}>
           {trackQuantity ? 'Stock count decreases with each sale and shows low-stock warnings.' : 'No quantity tracking — good for snacks staff may grab freely.'}
         </div>
       </div>
+
       {trackQuantity && (
+        <div style={{ padding: '4px 2px' }}>
+          <Toggle checked={sized} onChange={setSized} label="This product comes in sizes" />
+          <div className="muted" style={{ fontSize: 12.5, marginTop: 6, lineHeight: 1.4 }}>
+            {sized ? 'Stock is tracked per size. Staff pick a size at checkout and when restocking.' : 'One stock count for the whole product.'}
+          </div>
+        </div>
+      )}
+
+      {trackQuantity && !sized && (
         <Field label="Quantity in stock"><input className="input tnum" value={quantity} onChange={(e) => setQuantity(e.target.value)} inputMode="numeric" /></Field>
       )}
+
+      {trackQuantity && sized && (
+        <div className="field">
+          <label>Sizes &amp; counts {sizes.length > 0 && <span className="muted tnum" style={{ fontWeight: 600 }}>· {sizedTotal} total</span>}</label>
+          <div className="size-rows">
+            {sizes.map((z) => (
+              <div key={z.id} className="size-row">
+                <input className="input size-row-label" value={z.label} onChange={(e) => patchSize(z.id, { label: e.target.value })} placeholder="Size" />
+                <input className="input tnum size-row-qty" value={z.quantity} onChange={(e) => patchSize(z.id, { quantity: e.target.value })} inputMode="numeric" placeholder="0" />
+                <button className="btn ghost icon sm" onClick={() => removeSize(z.id)} aria-label="Remove size"><Icon name="x" size={16} /></button>
+              </div>
+            ))}
+            {sizes.length === 0 && <div className="muted" style={{ fontSize: 13, padding: '2px 0 8px' }}>Add at least one size below.</div>}
+          </div>
+          <div className="size-quickadd">
+            {COMMON.filter((l) => !used.includes(l.toLowerCase())).map((l) => (
+              <button key={l} type="button" className="chip-add" onClick={() => addSize(l)}><Icon name="plus" size={13} /> {l}</button>
+            ))}
+            <button type="button" className="chip-add" onClick={() => addSize('')}><Icon name="plus" size={13} /> Custom</button>
+          </div>
+        </div>
+      )}
+
       {!isNew && (
         <div className="co-note"><Icon name="tag" size={15} /> Price changes apply to all future sales. Past transactions keep the price they were sold at.</div>
       )}

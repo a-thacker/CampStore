@@ -178,7 +178,7 @@ function exportCSV(tx, db, includeWeek) {
   [...tx].sort((a, b) => b.ts - a.ts).forEach((t) => {
     rows.push([
       new Date(t.ts).toLocaleDateString(), nameFor(t),
-      '"' + t.items.map((l) => l.qty + '× ' + l.name).join(', ') + '"',
+      '"' + t.items.map((l) => l.qty + '× ' + l.name + (l.sizeLabel ? ' (' + l.sizeLabel + ')' : '')).join(', ') + '"',
       t.method, t.total.toFixed(2), ...(includeWeek ? [weekName(t.weekId)] : []),
     ]);
   });

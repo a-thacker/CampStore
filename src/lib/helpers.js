@@ -7,6 +7,12 @@ export const money = (n) => '$' + (n < 0 ? '-' : '') + Math.abs(Number(n) || 0).
 
 const SALEKINDS = ['sale', 'return'];
 
+/* ----- sizes: a product is "sized" when it has a non-empty sizes[] ----- */
+function isSized(p) { return Array.isArray(p.sizes) && p.sizes.length > 0; }
+function sizeTotal(p) { return (p.sizes || []).reduce((s, z) => s + (parseInt(z.quantity) || 0), 0); }
+function totalQty(p) { return isSized(p) ? sizeTotal(p) : (p.quantity || 0); }
+function findSize(p, sizeId) { return (p.sizes || []).find((z) => z.id === sizeId) || null; }
+
 function weekCampers(db, weekId) { return db.campers.filter((c) => c.weekId === weekId); }
 function weekTabs(db, weekId) { return db.tabs.filter((t) => t.weekId === weekId); }
 function weekTx(db, weekId) { return db.transactions.filter((t) => t.weekId === weekId && SALEKINDS.includes(t.kind)); }
@@ -34,6 +40,7 @@ function ledgerFor(db, payerType, payerId) {
 }
 
 export const Store = {
-  money, weekCampers, weekTabs, weekTx, weekSales, allSales,
+  money, isSized, sizeTotal, totalQty, findSize,
+  weekCampers, weekTabs, weekTx, weekSales, allSales,
   outstandingTabs, lowStock, camperSpent, ledgerFor,
 };

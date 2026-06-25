@@ -40,12 +40,29 @@ function Station({ session }) {
 
   const list = db.products.filter((p) => p.active && p.category === cat &&
     p.name.toLowerCase().includes(q.toLowerCase()));
-  const lowCount = db.products.filter((p) => p.active && p.trackQuantity && p.quantity <= db.settings.lowStock).length;
+  const lowCount = db.products.filter((p) => p.active && p.trackQuantity && Store.totalQty(p) <= db.settings.lowStock).length;
   const wrap = async (fn, ok) => { try { await fn(); if (ok) toast(ok); } catch (e) { toast(e.message); } };
 
-  const bump = (p, d) => p.trackQuantity && wrap(() => api.adjustStock(p.id, Math.max(0, (p.quantity || 0) + d)),
-    (d > 0 ? '+' + d : d) + ' · ' + p.name);
-  const setQty = (p, n) => wrap(() => api.adjustStock(p.id, Math.max(0, n)));
+  // write a new count for one size (or the whole product when sizeId is null)
+  function writeQty(p, n, sizeId) {
+    const next = Math.max(0, n);
+    if (sizeId && Store.isSized(p)) {
+      const sizes = p.sizes.map((z) => z.id === sizeId ? { ...z, quantity: next } : z);
+      return api.setSizes(p.id, sizes);
+    }
+    return api.adjustStock(p.id, next);
+  }
+  const bump = (p, d, sizeId) => {
+    if (!p.trackQuantity) return;
+    if (Store.isSized(p)) {
+      if (!sizeId) return;
+      const z = Store.findSize(p, sizeId);
+      return wrap(() => writeQty(p, (z ? z.quantity : 0) + d, sizeId),
+        (d > 0 ? '+' + d : d) + ' · ' + p.name + (z ? ' · ' + z.label : ''));
+    }
+    return wrap(() => writeQty(p, (p.quantity || 0) + d), (d > 0 ? '+' + d : d) + ' · ' + p.name);
+  };
+  const setQty = (p, n, sizeId) => wrap(() => writeQty(p, Math.max(0, n), sizeId));
   const startTracking = (p) => wrap(() => api.setTracking(p.id, true, p.quantity || 0), 'Now counting ' + p.name);
   const setPhoto = async (p, file) => {
     if (!file) return;
@@ -54,7 +71,9 @@ function Station({ session }) {
   };
   const addProduct = (prod) => wrap(() => api.addProduct({
     name: prod.name, category: prod.category, price: prod.price,
-    trackQuantity: prod.category === 'merch', quantity: prod.quantity || 0,
+    trackQuantity: prod.category === 'merch',
+    quantity: prod.sizes && prod.sizes.length ? prod.sizes.reduce((s, z) => s + (z.quantity || 0), 0) : (prod.quantity || 0),
+    sizes: prod.sizes && prod.sizes.length ? prod.sizes : null,
   }), prod.name + ' added');
 
   return (
@@ -100,14 +119,22 @@ function Station({ session }) {
 
 function StockCard({ p, lowStock, onBump, onSet, onPhoto, onTrack }) {
   const fileRef = useRef(null);
+  const sized = Store.isSized(p);
+  const [sel, setSel] = useState(sized ? p.sizes[0].id : null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
-  const out = p.trackQuantity && p.quantity <= 0;
-  const low = p.trackQuantity && p.quantity > 0 && p.quantity <= lowStock;
 
-  function openSet() { setDraft(String(p.quantity ?? 0)); setEditing(true); }
-  function commit() { const n = parseInt(draft); if (!isNaN(n)) onSet(p, Math.max(0, n)); setEditing(false); }
+  // keep selected size valid as sizes change between renders
+  const selSize = sized ? (Store.findSize(p, sel) || p.sizes[0]) : null;
+  const total = Store.totalQty(p);
+  const out = p.trackQuantity && total <= 0;
+  const low = p.trackQuantity && total > 0 && total <= lowStock;
+  const shownQty = sized ? (selSize ? selSize.quantity : 0) : p.quantity;
+  const selOut = sized && shownQty <= 0;
+
+  function openSet() { setDraft(String(shownQty ?? 0)); setEditing(true); }
+  function commit() { const n = parseInt(draft); if (!isNaN(n)) onSet(p, Math.max(0, n), sized ? selSize.id : null); setEditing(false); }
 
   return (
     <div className={'scard' + (out ? ' out' : '')}>
@@ -127,19 +154,39 @@ function StockCard({ p, lowStock, onBump, onSet, onPhoto, onTrack }) {
         {p.trackQuantity ? (
           <>
             <div className="scard-status">
-              {out ? <Badge kind="out">Out of stock</Badge> : low ? <Badge kind="low">Low · {p.quantity} left</Badge> : <Badge kind="ok">{p.quantity} in stock</Badge>}
+              {out ? <Badge kind="out">Out of stock</Badge>
+                : low ? <Badge kind="low">Low · {total}{sized ? ' total' : ' left'}</Badge>
+                : <Badge kind="ok">{total} in stock{sized ? ' · all sizes' : ''}</Badge>}
             </div>
+
+            {sized && (
+              <div className="size-chips">
+                {p.sizes.map((z) => (
+                  <button key={z.id} type="button"
+                    className={'size-chip' + (z.id === selSize.id ? ' active' : '') + (z.quantity <= 0 ? ' empty' : '')}
+                    onClick={() => { setSel(z.id); setEditing(false); }}>
+                    <span className="size-chip-label">{z.label}</span>
+                    <span className="size-chip-qty tnum">{z.quantity}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
             {editing ? (
               <div className="scard-setrow">
                 <input className="input lg tnum" autoFocus inputMode="numeric" value={draft}
                   onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && commit()} />
-                <button className="btn primary lg" onClick={commit}>Set</button>
+                <button className="btn primary lg" onClick={commit}>{sized ? 'Set ' + selSize.label : 'Set'}</button>
               </div>
             ) : (
               <div className="scard-qtyrow">
-                <button className="qbtn minus" onClick={() => onBump(p, -1)} disabled={out} aria-label="Remove one"><Icon name="minus" size={26} /></button>
-                <button className="scard-count tnum" onClick={openSet} title="Tap to set exact count">{p.quantity}</button>
-                <button className="qbtn plus" onClick={() => onBump(p, +1)} aria-label="Add one"><Icon name="plus" size={26} /></button>
+                <button className="qbtn minus" onClick={() => onBump(p, -1, sized ? selSize.id : null)} disabled={sized ? selOut : out} aria-label="Remove one"><Icon name="minus" size={26} /></button>
+                <button className="scard-count tnum" onClick={openSet} title="Tap to set exact count">
+                  {sized
+                    ? <span className="scard-count-stack"><span className="scard-count-num">{shownQty}</span><span className="scard-count-sub">size {selSize.label}</span></span>
+                    : shownQty}
+                </button>
+                <button className="qbtn plus" onClick={() => onBump(p, +1, sized ? selSize.id : null)} aria-label="Add one"><Icon name="plus" size={26} /></button>
               </div>
             )}
           </>
@@ -155,14 +202,25 @@ function StockCard({ p, lowStock, onBump, onSet, onPhoto, onTrack }) {
 }
 
 function QuickAddModal({ cat, onAdd, onClose }) {
+  const uid = (p) => p + '_' + Math.random().toString(36).slice(2, 9);
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [quantity, setQuantity] = useState('0');
+  const [sizeStr, setSizeStr] = useState('');
+  const sizeLabels = sizeStr.split(',').map((s) => s.trim()).filter(Boolean);
+  const sized = cat === 'merch' && sizeLabels.length > 0;
   const valid = name.trim() && price !== '' && !isNaN(+price) && +price >= 0;
+  function submit() {
+    onAdd({
+      name: name.trim(), price: +(+price).toFixed(2), category: cat,
+      quantity: +quantity || 0,
+      sizes: sized ? sizeLabels.map((label) => ({ id: uid('size'), label, quantity: 0 })) : null,
+    });
+  }
   return (
     <Modal title={'Add ' + (cat === 'merch' ? 'merch item' : 'food item')} onClose={onClose}
       footer={<><button className="btn" onClick={onClose}>Cancel</button>
-        <button className="btn primary" disabled={!valid} onClick={() => onAdd({ name: name.trim(), price: +(+price).toFixed(2), category: cat, quantity: +quantity || 0 })}>Add item</button></>}>
+        <button className="btn primary" disabled={!valid} onClick={submit}>Add item</button></>}>
       <Field label="Item name"><input className="input lg" value={name} onChange={(e) => setName(e.target.value)} placeholder={cat === 'merch' ? 'e.g. Camp Hoodie' : 'e.g. Ice Cream'} autoFocus /></Field>
       <div className="row">
         <Field label="Price">
@@ -171,9 +229,14 @@ function QuickAddModal({ cat, onAdd, onClose }) {
             <input className="input lg tnum" style={{ paddingLeft: 26 }} value={price} onChange={(e) => setPrice(e.target.value)} placeholder="0.00" inputMode="decimal" />
           </div>
         </Field>
-        {cat === 'merch' && <Field label="Starting count"><input className="input lg tnum" value={quantity} onChange={(e) => setQuantity(e.target.value)} inputMode="numeric" /></Field>}
+        {cat === 'merch' && !sized && <Field label="Starting count"><input className="input lg tnum" value={quantity} onChange={(e) => setQuantity(e.target.value)} inputMode="numeric" /></Field>}
       </div>
-      <div className="muted" style={{ fontSize: 13 }}>You can add a photo right after it appears on the board.</div>
+      {cat === 'merch' && (
+        <Field label="Sizes (optional)">
+          <input className="input lg" value={sizeStr} onChange={(e) => setSizeStr(e.target.value)} placeholder="e.g. S, M, L, XL — leave blank for no sizes" />
+        </Field>
+      )}
+      <div className="muted" style={{ fontSize: 13 }}>{sized ? 'Sizes start at 0 — set each count on the board after adding.' : 'You can add a photo right after it appears on the board.'}</div>
     </Modal>
   );
 }

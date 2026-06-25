@@ -361,7 +361,7 @@ function HistoryModal({ db, camper, onReturn, onLoad, onCashOut, onClose }) {
                 </div>
                 {t.items.length > 0 && (
                   <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>
-                    {t.items.map((l) => Math.abs(l.qty) + '× ' + l.name).join(', ')}
+                    {t.items.map((l) => Math.abs(l.qty) + '× ' + l.name + (l.sizeLabel ? ' (' + l.sizeLabel + ')' : '')).join(', ')}
                   </div>
                 )}
               </div>

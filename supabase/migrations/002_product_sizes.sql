@@ -1,25 +1,23 @@
 -- ============================================================
---  Camp Store Register — transactional RPC functions
---  Run AFTER schema.sql. Call these from the front-end via
---  supabase.rpc('record_sale', { ... }) etc. Each runs in a
---  single transaction so stock + balances never drift.
+--  Migration 002 — per-size inventory for merch
+--  Idempotent. Adds products.sizes and teaches record_sale /
+--  process_return to move stock by size when a line carries one.
+--
+--  sizes shape (jsonb array, null/empty = product has no sizes):
+--    [{ "id":"size_x9", "label":"M", "quantity":12 }, ...]
+--  products.quantity is kept equal to sum(sizes[].quantity) for
+--  sized products, so the existing "total stock" reads still work.
 -- ============================================================
 
--- ------------------------------------------------------------
---  record_sale
---  Records a sale, decrements merch stock, and adjusts the
---  payer's balance/tab. Enforces purchase + over-balance rules.
---
---  p_items shape (jsonb array):
---    [{ "product_id":"uuid", "name":"...", "category":"merch|food",
---       "size_id":"size_x"|null, "size_label":"M"|null,
---       "qty":2, "unit_price":18.00, "line_total":36.00 }, ...]
--- ------------------------------------------------------------
+alter table products add column if not exists sizes jsonb;
 
--- helper: apply a stock delta to a product, per size when given.
--- sized product + size id -> adjust that size (clamp 0) and keep
--- quantity = sum(sizes); otherwise adjust quantity directly.
--- No-op for untracked products (food).
+-- ------------------------------------------------------------
+--  helper: apply a stock delta to a product.
+--  - sized product + size id  -> adjust that size, clamp at 0,
+--                                recompute quantity = sum(sizes)
+--  - otherwise                -> adjust quantity directly
+--  No-op for untracked products (food).
+-- ------------------------------------------------------------
 create or replace function _adjust_product_stock(
   p_product_id uuid,
   p_size_id    text,
@@ -39,6 +37,7 @@ begin
   if v_prod.sizes is not null
      and jsonb_array_length(v_prod.sizes) > 0
      and p_size_id is not null then
+    -- adjust only the matching size, never below zero
     select jsonb_agg(
              case when (s->>'id') = p_size_id
                then jsonb_set(s, '{quantity}',
@@ -46,8 +45,11 @@ begin
                else s end)
       into v_sizes
       from jsonb_array_elements(v_prod.sizes) s;
+
     select coalesce(sum((s->>'quantity')::int), 0)
-      into v_total from jsonb_array_elements(v_sizes) s;
+      into v_total
+      from jsonb_array_elements(v_sizes) s;
+
     update products set sizes = v_sizes, quantity = v_total where id = p_product_id;
   else
     update products
@@ -56,12 +58,15 @@ begin
   end if;
 end $$;
 
+-- ------------------------------------------------------------
+--  record_sale  (updated: stock moves per size)
+-- ------------------------------------------------------------
 create or replace function record_sale(
   p_week_id    uuid,
-  p_payer_type text,           -- 'camper' | 'tab'
+  p_payer_type text,
   p_payer_id   uuid,
   p_items      jsonb,
-  p_method     text,           -- 'balance' | 'cash' | 'card' | 'tab'
+  p_method     text,
   p_square_payment_id text default null
 ) returns transactions
 language plpgsql security definer as $$
@@ -71,11 +76,9 @@ declare
   v_camper  campers%rowtype;
   v_txn     transactions%rowtype;
 begin
-  -- total from the snapshot lines
   select coalesce(sum((i->>'line_total')::numeric), 0) into v_total
   from jsonb_array_elements(p_items) i;
 
-  -- validate camper rules
   if p_payer_type = 'camper' then
     select * into v_camper from campers where id = p_payer_id for update;
     if v_camper.cashed_out then
@@ -99,7 +102,6 @@ begin
       -((v_item->>'qty')::int));
   end loop;
 
-  -- write the ledger row
   insert into transactions (week_id, kind, payer_type, camper_id, tab_id,
                             items, total, method, square_payment_id)
   values (p_week_id, 'sale', p_payer_type,
@@ -108,7 +110,6 @@ begin
           p_items, v_total, p_method, p_square_payment_id)
   returning * into v_txn;
 
-  -- move money
   if p_payer_type = 'camper' and p_method = 'balance' then
     update campers set balance = balance - v_total where id = p_payer_id;
   elsif p_payer_type = 'tab' and p_method = 'tab' then
@@ -119,9 +120,7 @@ begin
 end $$;
 
 -- ------------------------------------------------------------
---  process_return
---  Reverses a sale: flags the original, restocks merch, refunds
---  to the original method, and writes a negative 'return' row.
+--  process_return  (updated: restock per size)
 -- ------------------------------------------------------------
 create or replace function process_return(p_txn_id uuid)
 returns transactions
@@ -147,7 +146,6 @@ begin
       (v_item->>'qty')::int);
   end loop;
 
-  -- negate the line snapshot for the return record
   select jsonb_agg(
            jsonb_set(
              jsonb_set(i, '{qty}', to_jsonb(-((i->>'qty')::int))),
@@ -161,60 +159,11 @@ begin
           coalesce(v_items, '[]'), -v_orig.total, v_orig.method, v_orig.id)
   returning * into v_ret;
 
-  -- refund to original method
   if v_orig.method = 'balance' and v_orig.camper_id is not null then
     update campers set balance = balance + v_orig.total where id = v_orig.camper_id;
   elsif v_orig.method = 'tab' and v_orig.tab_id is not null then
     update tabs set balance = balance - v_orig.total where id = v_orig.tab_id;
   end if;
-  -- cash/card refunds are handed back at the register (and via Square refund API for cards)
 
   return v_ret;
-end $$;
-
--- ------------------------------------------------------------
---  deposit_balance  (load prepaid funds; negative = correction)
--- ------------------------------------------------------------
-create or replace function deposit_balance(p_camper_id uuid, p_amount numeric)
-returns transactions
-language plpgsql security definer as $$
-declare v_txn transactions%rowtype; v_week uuid;
-begin
-  select week_id into v_week from campers where id = p_camper_id;
-  update campers set balance = balance + p_amount where id = p_camper_id;
-  insert into transactions (week_id, kind, payer_type, camper_id, items, total, method)
-  values (v_week, 'deposit', 'camper', p_camper_id, '[]', p_amount, 'deposit')
-  returning * into v_txn;
-  return v_txn;
-end $$;
-
--- ------------------------------------------------------------
---  cash_out_camper  (return remaining balance, close account)
--- ------------------------------------------------------------
-create or replace function cash_out_camper(p_camper_id uuid)
-returns transactions
-language plpgsql security definer as $$
-declare v_bal numeric(10,2); v_week uuid; v_txn transactions%rowtype;
-begin
-  select balance, week_id into v_bal, v_week from campers where id = p_camper_id for update;
-  insert into transactions (week_id, kind, payer_type, camper_id, items, total, method)
-  values (v_week, 'cashout', 'camper', p_camper_id, '[]', v_bal, 'cash')
-  returning * into v_txn;
-  update campers
-     set balance = 0, cashed_out = true, cashed_out_at = now(), allow_purchase = false
-   where id = p_camper_id;
-  return v_txn;
-end $$;
-
--- ------------------------------------------------------------
---  settle_tab  (mark a family tab paid)
--- ------------------------------------------------------------
-create or replace function settle_tab(p_tab_id uuid)
-returns tabs
-language plpgsql security definer as $$
-declare v_tab tabs%rowtype;
-begin
-  update tabs set settled = true, settled_at = now(), balance = 0
-   where id = p_tab_id returning * into v_tab;
-  return v_tab;
 end $$;

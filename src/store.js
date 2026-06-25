@@ -6,6 +6,7 @@ const mapProduct = (r) => ({
   id: r.id, name: r.name, category: r.category, price: Number(r.price),
   trackQuantity: r.track_quantity, quantity: r.quantity, active: r.active,
   image: r.image_url, squareCatalogId: r.square_catalog_id,
+  sizes: Array.isArray(r.sizes) && r.sizes.length ? r.sizes : null,
 });
 const mapWeek = (r) => ({
   id: r.id, name: r.name, type: r.type, start: r.start_date, end: r.end_date, order: r.sort_order,
@@ -21,6 +22,7 @@ const mapCamper = (r) => ({
 });
 const mapItems = (items) => (items || []).map((l) => ({
   productId: l.product_id, name: l.name, category: l.category, qty: l.qty,
+  sizeId: l.size_id || null, sizeLabel: l.size_label || null,
   unitPrice: Number(l.unit_price), lineTotal: Number(l.line_total),
 }));
 const mapTxn = (r) => ({
@@ -33,6 +35,7 @@ const mapTxn = (r) => ({
 // app cart line -> RPC item snapshot (snake)
 const toRpcItem = (l) => ({
   product_id: l.productId, name: l.name, category: l.category,
+  size_id: l.sizeId || null, size_label: l.sizeLabel || null,
   qty: l.qty, unit_price: l.unitPrice, line_total: +(l.unitPrice * l.qty).toFixed(2),
 });
 
@@ -99,15 +102,21 @@ export function useStore(session) {
     addProduct: (p) => after(supabase.from('products').insert({
       name: p.name, category: p.category, price: p.price,
       track_quantity: p.trackQuantity, quantity: p.trackQuantity ? (p.quantity || 0) : null, active: true,
+      sizes: p.trackQuantity && p.sizes && p.sizes.length ? p.sizes : null,
     })),
     updateProduct: (id, p) => after(supabase.from('products').update({
       name: p.name, category: p.category, price: p.price,
       track_quantity: p.trackQuantity, quantity: p.trackQuantity ? (p.quantity || 0) : null,
+      sizes: p.trackQuantity && p.sizes && p.sizes.length ? p.sizes : null,
     }).eq('id', id)),
     archiveProduct: (id) => after(supabase.from('products').update({ active: false }).eq('id', id)),
     adjustStock: (id, quantity) => after(supabase.from('products').update({ quantity }).eq('id', id)),
+    // replace a sized product's sizes[] and keep quantity = sum(sizes)
+    setSizes: (id, sizes) => after(supabase.from('products').update({
+      sizes, quantity: (sizes || []).reduce((s, z) => s + (parseInt(z.quantity) || 0), 0),
+    }).eq('id', id)),
     setTracking: (id, on, quantity = 0) => after(supabase.from('products')
-      .update({ track_quantity: on, quantity: on ? quantity : null }).eq('id', id)),
+      .update({ track_quantity: on, quantity: on ? quantity : null, sizes: on ? undefined : null }).eq('id', id)),
     // upload a (downscaled) image blob to Storage, save its public URL on the product
     uploadProductImage: async (productId, blob) => {
       const path = `${productId}-${Date.now()}.jpg`;
