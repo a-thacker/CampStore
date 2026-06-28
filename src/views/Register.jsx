@@ -17,7 +17,9 @@ export function RegisterView({ db, api, week, toast }) {
   useEffect(() => { setCart([]); setPayerId(null); }, [week && week.id]);
 
   const products = db.products.filter((p) => p.active && p.category === cat &&
-    p.name.toLowerCase().includes(q.toLowerCase()));
+    p.name.toLowerCase().includes(q.toLowerCase()))
+    // keep out-of-stock items at the bottom (stable sort preserves order otherwise)
+    .sort((a, b) => ((a.trackQuantity && a.quantity <= 0) ? 1 : 0) - ((b.trackQuantity && b.quantity <= 0) ? 1 : 0));
 
   const campers = Store.weekCampers(db, week.id);
   const tabs = Store.weekTabs(db, week.id);
