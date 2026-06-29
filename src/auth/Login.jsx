@@ -37,9 +37,6 @@ export function Login() {
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
         </div>
-        <p className="muted" style={{ textAlign: 'center', fontSize: 12.5, marginTop: 18, lineHeight: 1.5 }}>
-          Staff accounts are created in Supabase → Authentication → Users.
-        </p>
       </form>
     </div>
   );

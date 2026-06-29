@@ -151,7 +151,7 @@ function ProductModal({ product, onSave, onArchive, onClose, allTags = [] }) {
       }>
       <Field label="Product name"><input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Camp T-Shirt" autoFocus /></Field>
       <div className="row">
-        <Field label="Price">
+        <Field label="Price" help="Price changes apply to all future sales. Past transactions keep the price they were sold at.">
           <div style={{ position: 'relative' }}>
             <span style={{ position: 'absolute', left: 12, top: 11, color: 'var(--ink-3)', fontWeight: 700 }}>$</span>
             <input className="input tnum" style={{ paddingLeft: 24 }} value={price} onChange={(e) => setPrice(e.target.value)} placeholder="0.00" inputMode="decimal" />
@@ -164,23 +164,16 @@ function ProductModal({ product, onSave, onArchive, onClose, allTags = [] }) {
           </select>
         </Field>
       </div>
-      <Field label="Tags (optional)">
+      <Field label="Tags (optional)" help={'Type a tag and press Enter, or separate with commas (“shirts, hats”). A product can be in several sections. Case-insensitive.'}>
         <TagInput value={tags} onChange={setTags} suggestions={allTags} />
-        <div className="muted" style={{ fontSize: 12.5, marginTop: 6, lineHeight: 1.4 }}>Type a tag and press Enter, or separate with commas (“shirts, hats”). A product can be in several sections. Case-insensitive.</div>
       </Field>
       <div style={{ padding: '4px 2px' }}>
-        <Toggle checked={trackQuantity} onChange={(v) => { setTrack(v); if (!v) setSized(false); }} label="Track inventory quantity" />
-        <div className="muted" style={{ fontSize: 12.5, marginTop: 6, lineHeight: 1.4 }}>
-          {trackQuantity ? 'Stock count decreases with each sale and shows low-stock warnings.' : 'No quantity tracking — good for snacks staff may grab freely.'}
-        </div>
+        <Toggle checked={trackQuantity} onChange={(v) => { setTrack(v); if (!v) setSized(false); }} label="Track inventory quantity" help={trackQuantity ? 'Stock count decreases with each sale and shows low-stock warnings.' : 'No quantity tracking — good for snacks staff may grab freely.'} />
       </div>
 
       {trackQuantity && (
         <div style={{ padding: '4px 2px' }}>
-          <Toggle checked={sized} onChange={setSized} label="This product comes in sizes" />
-          <div className="muted" style={{ fontSize: 12.5, marginTop: 6, lineHeight: 1.4 }}>
-            {sized ? 'Stock is tracked per size. Staff pick a size at checkout and when restocking.' : 'One stock count for the whole product.'}
-          </div>
+          <Toggle checked={sized} onChange={setSized} label="This product comes in sizes" help={sized ? 'Stock is tracked per size. Staff pick a size at checkout and when restocking.' : 'One stock count for the whole product.'} />
         </div>
       )}
 
@@ -210,9 +203,6 @@ function ProductModal({ product, onSave, onArchive, onClose, allTags = [] }) {
         </div>
       )}
 
-      {!isNew && (
-        <div className="co-note"><Icon name="tag" size={15} /> Price changes apply to all future sales. Past transactions keep the price they were sold at.</div>
-      )}
     </Modal>
   );
 }

@@ -241,7 +241,7 @@ function LoadBalanceModal({ camper, onLoad, onClose }) {
       footer={<><button className="btn" onClick={onClose}>Cancel</button>
         <button className="btn primary" disabled={!valid} onClick={() => onLoad(camper, +(+amt).toFixed(2))}>Add {valid ? Store.money(+amt) : 'funds'}</button></>}>
       <div className="co-note"><Icon name="wallet" size={15} /> Current balance: <b className="tnum">{Store.money(camper.balance)}</b></div>
-      <Field label="Amount to add">
+      <Field label="Amount to add" help="Use a negative amount to correct or refund. Loading funds is recorded as a deposit, not a sale.">
         <div style={{ position: 'relative' }}>
           <span style={{ position: 'absolute', left: 13, top: 13, color: 'var(--ink-3)', fontWeight: 700 }}>$</span>
           <input className="input lg tnum" style={{ paddingLeft: 26 }} value={amt} onChange={(e) => setAmt(e.target.value)} placeholder="0.00" inputMode="decimal" autoFocus />
@@ -250,7 +250,6 @@ function LoadBalanceModal({ camper, onLoad, onClose }) {
       <div style={{ display: 'flex', gap: 8 }}>
         {presets.map((p) => <button key={p} className="btn" style={{ flex: 1 }} onClick={() => setAmt(String(p))}>${p}</button>)}
       </div>
-      <div className="muted" style={{ fontSize: 12.5 }}>Use a negative amount to correct/refund. Loading funds is recorded as a deposit, not a sale.</div>
     </Modal>
   );
 }
@@ -272,11 +271,10 @@ function BulkModal({ onAdd, onClose }) {
     <Modal title="Bulk add campers" wide onClose={onClose}
       footer={<><button className="btn" onClick={onClose}>Cancel</button>
         <button className="btn primary" disabled={parsed.length === 0} onClick={() => onAdd(parsed)}>Add {parsed.length} camper{parsed.length !== 1 ? 's' : ''}</button></>}>
-      <Field label="Paste roster — one camper per line">
+      <Field label="Paste roster — one camper per line" help="Format: Name, Age, Cabin (comma or tab separated). Age and cabin are optional. Works with pasted spreadsheet columns.">
         <textarea className="textarea" style={{ minHeight: 160, fontFamily: 'inherit' }} value={text} onChange={(e) => setText(e.target.value)}
           placeholder={'First Last, Age, Cabin\nMason Reyes, 10, Cedar\nAva Thompson, 9, Birch\nLiam Nguyen'} autoFocus />
       </Field>
-      <div className="muted" style={{ fontSize: 12.5 }}>Format: <b>Name, Age, Cabin</b> (comma or tab separated). Age and cabin are optional. Works with pasted spreadsheet columns.</div>
       {parsed.length > 0 && (
         <div className="card" style={{ overflow: 'hidden' }}>
           <div className="section-label" style={{ padding: '10px 14px 4px' }}>Preview · {parsed.length}</div>

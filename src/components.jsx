@@ -30,6 +30,7 @@ function Icon({ name, size = 20, stroke = 2 }) {
     camera: 'M3 8a2 2 0 0 1 2-2h1.5l1-1.5a1 1 0 0 1 .8-.5h5.4a1 1 0 0 1 .8.5l1 1.5H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z',
     image: 'M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5zM8.5 11a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM21 15l-5-5L5 21',
     grip: 'M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01',
+    help: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM9.2 9.3a3 3 0 0 1 5.6 1.3c0 2-3 2.7-3 4M12 17.5h.01',
     arrowLeft: 'M19 12H5M12 19l-7-7 7-7',
   }[name];
   return (
@@ -42,19 +43,29 @@ function Icon({ name, size = 20, stroke = 2 }) {
 
 function Badge({ kind, children }) { return <span className={'badge ' + kind}>{children}</span>; }
 
-function Toggle({ checked, onChange, label }) {
+function HelpTip({ text }) {
+  if (!text) return null;
+  return (
+    <span className="helptip" tabIndex={0} role="button" aria-label="More info">
+      <Icon name="help" size={15} stroke={2} />
+      <span className="helptip-bubble" role="tooltip">{text}</span>
+    </span>
+  );
+}
+
+function Toggle({ checked, onChange, label, help }) {
   return (
     <label className="toggle">
       <span className={'toggle-track' + (checked ? ' on' : '')} onClick={(e) => { e.preventDefault(); onChange(!checked); }}>
         <span className="toggle-knob" />
       </span>
-      {label && <span className="toggle-label">{label}</span>}
+      {label && <span className="toggle-label">{label}{help && <HelpTip text={help} />}</span>}
     </label>
   );
 }
 
-function Field({ label, children }) {
-  return <div className="field">{label && <label>{label}</label>}{children}</div>;
+function Field({ label, help, children }) {
+  return <div className="field">{label && <label>{label}{help && <HelpTip text={help} />}</label>}{children}</div>;
 }
 
 function Search({ value, onChange, placeholder, autoFocus }) {
@@ -162,4 +173,4 @@ function ToastHost() {
   return <div className="toast"><Icon name="check" size={18} />{msg}</div>;
 }
 
-export { Icon, Badge, Toggle, Field, Search, Modal, Avatar, EmptyState, TagInput, useToast, ToastHost };
+export { Icon, Badge, Toggle, Field, Search, Modal, Avatar, EmptyState, TagInput, HelpTip, useToast, ToastHost };
