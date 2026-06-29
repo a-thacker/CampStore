@@ -5,7 +5,7 @@ import { supabase } from './lib/supabase.js';
 const mapProduct = (r) => ({
   id: r.id, name: r.name, category: r.category, price: Number(r.price),
   trackQuantity: r.track_quantity, quantity: r.quantity, active: r.active,
-  image: r.image_url, squareCatalogId: r.square_catalog_id,
+  image: r.image_url, squareCatalogId: r.square_catalog_id, tag: r.tag || null,
   sizes: Array.isArray(r.sizes) && r.sizes.length ? r.sizes : null,
 });
 const mapWeek = (r) => ({
@@ -100,12 +100,12 @@ export function useStore(session) {
 
     /* ----- products ----- */
     addProduct: (p) => after(supabase.from('products').insert({
-      name: p.name, category: p.category, price: p.price,
+      name: p.name, category: p.category, price: p.price, tag: p.tag || null,
       track_quantity: p.trackQuantity, quantity: p.trackQuantity ? (p.quantity || 0) : null, active: true,
       sizes: p.trackQuantity && p.sizes && p.sizes.length ? p.sizes : null,
     })),
     updateProduct: (id, p) => after(supabase.from('products').update({
-      name: p.name, category: p.category, price: p.price,
+      name: p.name, category: p.category, price: p.price, tag: p.tag || null,
       track_quantity: p.trackQuantity, quantity: p.trackQuantity ? (p.quantity || 0) : null,
       sizes: p.trackQuantity && p.sizes && p.sizes.length ? p.sizes : null,
     }).eq('id', id)),

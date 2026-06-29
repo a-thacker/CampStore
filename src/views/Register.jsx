@@ -16,10 +16,18 @@ export function RegisterView({ db, api, week, toast }) {
   // reset payer/cart when week changes
   useEffect(() => { setCart([]); setPayerId(null); }, [week && week.id]);
 
-  const products = db.products.filter((p) => p.active && p.category === cat &&
-    p.name.toLowerCase().includes(q.toLowerCase()))
-    // keep out-of-stock items at the bottom (stable sort preserves order otherwise)
-    .sort((a, b) => ((a.trackQuantity && a.quantity <= 0) ? 1 : 0) - ((b.trackQuantity && b.quantity <= 0) ? 1 : 0));
+  // search matches product name OR its tag; tags become sections on the grid
+  const ql = q.trim().toLowerCase();
+  const outSort = (a, b) => ((a.trackQuantity && a.quantity <= 0) ? 1 : 0) - ((b.trackQuantity && b.quantity <= 0) ? 1 : 0);
+  const visible = db.products.filter((p) => p.active && p.category === cat &&
+    (p.name.toLowerCase().includes(ql) || (p.tag || '').includes(ql)));
+  const tagList = [...new Set(visible.map((p) => p.tag).filter(Boolean))].sort();
+  const sections = tagList.map((t) => ({
+    key: t, label: t.replace(/\b\w/g, (c) => c.toUpperCase()),
+    items: visible.filter((p) => p.tag === t).slice().sort(outSort),
+  }));
+  const untagged = visible.filter((p) => !p.tag).slice().sort(outSort);
+  if (untagged.length) sections.push({ key: '__none', label: tagList.length ? 'Other' : null, items: untagged });
 
   const campers = Store.weekCampers(db, week.id);
   const tabs = Store.weekTabs(db, week.id);
@@ -68,28 +76,36 @@ export function RegisterView({ db, api, week, toast }) {
           </div>
           <Search value={q} onChange={setQ} placeholder={'Search ' + (cat === 'merch' ? 'merch' : 'snacks') + '…'} />
         </div>
-        <div className="prod-grid">
-          {products.map((p) => {
-            const sized = Store.isSized(p);
-            const out = p.trackQuantity && p.quantity <= 0;
-            const low = p.trackQuantity && p.quantity > 0 && p.quantity <= db.settings.lowStock;
-            return (
-              <button key={p.id} className={'prod' + (out ? ' out' : '') + (p.image ? ' has-photo' : '')} onClick={() => onProductClick(p)} disabled={out}>
-                {p.image && <div className="prod-thumb"><img src={p.image} alt="" /></div>}
-                <div className="prod-top">
-                  <span className="prod-name">{p.name}</span>
-                  {out ? <Badge kind="out">Out</Badge> : low ? <Badge kind="low">{p.quantity} left</Badge> : sized ? <Badge kind="muted">Sizes</Badge> : null}
-                </div>
-                <div className="prod-bottom">
-                  <span className="prod-price tnum">{Store.money(p.price)}</span>
-                  {p.trackQuantity && !out && !low && <span className="prod-stock tnum">{p.quantity} in stock</span>}
-                  {!p.trackQuantity && <span className="prod-stock">snack</span>}
-                </div>
-              </button>
-            );
-          })}
-          {products.length === 0 && <div style={{ gridColumn: '1/-1' }}><EmptyState icon="search" title="No products found" sub="Try a different search." /></div>}
-        </div>
+        {visible.length === 0 ? (
+          <EmptyState icon="search" title="No products found" sub="Try a different search." />
+        ) : sections.map((sec) => (
+          <div key={sec.key} className="prod-section">
+            {sec.label && <div className="prod-section-head">{sec.label}<span className="prod-section-count">{sec.items.length}</span></div>}
+            <div className="prod-grid">
+              {sec.items.map((p) => {
+                const sized = Store.isSized(p);
+                const out = p.trackQuantity && p.quantity <= 0;
+                const low = p.trackQuantity && p.quantity > 0 && p.quantity <= db.settings.lowStock;
+                return (
+                  <button key={p.id} className={'prod has-photo' + (out ? ' out' : '')} onClick={() => onProductClick(p)} disabled={out}>
+                    <div className={'prod-thumb' + (p.image ? '' : ' empty')}>
+                      {p.image ? <img src={p.image} alt="" /> : <Icon name="image" size={26} />}
+                    </div>
+                    <div className="prod-top">
+                      <span className="prod-name">{p.name}</span>
+                      {out ? <Badge kind="out">Out</Badge> : low ? <Badge kind="low">{p.quantity} left</Badge> : sized ? <Badge kind="muted">Sizes</Badge> : null}
+                    </div>
+                    <div className="prod-bottom">
+                      <span className="prod-price tnum">{Store.money(p.price)}</span>
+                      {p.trackQuantity && !out && !low && <span className="prod-stock tnum">{p.quantity} in stock</span>}
+                      {!p.trackQuantity && <span className="prod-stock">snack</span>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* cart */}
