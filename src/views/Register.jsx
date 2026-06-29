@@ -16,18 +16,47 @@ export function RegisterView({ db, api, week, toast }) {
   // reset payer/cart when week changes
   useEffect(() => { setCart([]); setPayerId(null); }, [week && week.id]);
 
-  // search matches product name OR its tag; tags become sections on the grid
+  // ----- tag sections: multi-tag, custom order, collapsible -----
+  const COLLAPSE_KEY = 'camp_collapsed_tags';
+  const [collapsed, setCollapsed] = useState(() => { try { return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '[]')); } catch (e) { return new Set(); } });
+  const [dragTag, setDragTag] = useState(null);
+  const [overTag, setOverTag] = useState(null);
+  const isCollapsed = (t) => collapsed.has(cat + ':' + t);
+  const toggleCollapse = (t) => setCollapsed((prev) => {
+    const n = new Set(prev); const k = cat + ':' + t;
+    if (n.has(k)) n.delete(k); else n.add(k);
+    localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...n])); return n;
+  });
+  const saveTagOrder = (order) => api.setTagOrder(order);
+
   const ql = q.trim().toLowerCase();
   const outSort = (a, b) => ((a.trackQuantity && a.quantity <= 0) ? 1 : 0) - ((b.trackQuantity && b.quantity <= 0) ? 1 : 0);
-  const visible = db.products.filter((p) => p.active && p.category === cat &&
-    (p.name.toLowerCase().includes(ql) || (p.tag || '').includes(ql)));
-  const tagList = [...new Set(visible.map((p) => p.tag).filter(Boolean))].sort();
-  const sections = tagList.map((t) => ({
-    key: t, label: t.replace(/\b\w/g, (c) => c.toUpperCase()),
-    items: visible.filter((p) => p.tag === t).slice().sort(outSort),
-  }));
-  const untagged = visible.filter((p) => !p.tag).slice().sort(outSort);
-  if (untagged.length) sections.push({ key: '__none', label: tagList.length ? 'Other' : null, items: untagged });
+  const inCat = db.products.filter((p) => p.active && p.category === cat);
+  const matchQ = (p) => !ql || p.name.toLowerCase().includes(ql) || (p.tags || []).some((t) => t.includes(ql));
+  const allTags = [...new Set(inCat.flatMap((p) => p.tags || []))];
+  const orderPref = db.settings.tagOrder || [];
+  const orderedTags = [
+    ...orderPref.filter((t) => allTags.includes(t)),
+    ...allTags.filter((t) => !orderPref.includes(t)).sort(),
+  ];
+  const titleCase = (s) => s.replace(/\b\w/g, (c) => c.toUpperCase());
+  const sections = [];
+  orderedTags.forEach((t) => {
+    const items = inCat.filter((p) => (p.tags || []).includes(t) && matchQ(p)).slice().sort(outSort);
+    if (items.length) sections.push({ key: t, label: titleCase(t), items, draggable: true });
+  });
+  const untagged = inCat.filter((p) => !(p.tags && p.tags.length) && matchQ(p)).slice().sort(outSort);
+  if (untagged.length) sections.push({ key: '__none', label: orderedTags.length ? 'Other' : null, items: untagged, draggable: false });
+  const anyVisible = sections.length > 0;
+
+  function dropOnTag(targetKey) {
+    if (!dragTag || dragTag === targetKey) { setDragTag(null); setOverTag(null); return; }
+    let g = (db.settings.tagOrder || []).slice();
+    [dragTag, targetKey].forEach((t) => { if (!g.includes(t)) g.push(t); });
+    g = g.filter((t) => t !== dragTag);
+    g.splice(g.indexOf(targetKey), 0, dragTag);
+    saveTagOrder(g); setDragTag(null); setOverTag(null);
+  }
 
   const campers = Store.weekCampers(db, week.id);
   const tabs = Store.weekTabs(db, week.id);
@@ -76,36 +105,60 @@ export function RegisterView({ db, api, week, toast }) {
           </div>
           <Search value={q} onChange={setQ} placeholder={'Search ' + (cat === 'merch' ? 'merch' : 'snacks') + '…'} />
         </div>
-        {visible.length === 0 ? (
+        {!anyVisible ? (
           <EmptyState icon="search" title="No products found" sub="Try a different search." />
-        ) : sections.map((sec) => (
-          <div key={sec.key} className="prod-section">
-            {sec.label && <div className="prod-section-head">{sec.label}<span className="prod-section-count">{sec.items.length}</span></div>}
-            <div className="prod-grid">
-              {sec.items.map((p) => {
-                const sized = Store.isSized(p);
-                const out = p.trackQuantity && p.quantity <= 0;
-                const low = p.trackQuantity && p.quantity > 0 && p.quantity <= db.settings.lowStock;
-                return (
-                  <button key={p.id} className={'prod has-photo' + (out ? ' out' : '')} onClick={() => onProductClick(p)} disabled={out}>
-                    <div className={'prod-thumb' + (p.image ? '' : ' empty')}>
-                      {p.image ? <img src={p.image} alt="" /> : <Icon name="image" size={26} />}
-                    </div>
-                    <div className="prod-top">
-                      <span className="prod-name">{p.name}</span>
-                      {out ? <Badge kind="out">Out</Badge> : low ? <Badge kind="low">{p.quantity} left</Badge> : sized ? <Badge kind="muted">Sizes</Badge> : null}
-                    </div>
-                    <div className="prod-bottom">
-                      <span className="prod-price tnum">{Store.money(p.price)}</span>
-                      {p.trackQuantity && !out && !low && <span className="prod-stock tnum">{p.quantity} in stock</span>}
-                      {!p.trackQuantity && <span className="prod-stock">snack</span>}
-                    </div>
+        ) : sections.map((sec) => {
+          const sectionCollapsed = sec.draggable && isCollapsed(sec.key);
+          return (
+            <div key={sec.key}
+              className={'prod-section' + (overTag === sec.key ? ' over' : '')}
+              onDragOver={sec.draggable ? (e) => { e.preventDefault(); if (overTag !== sec.key) setOverTag(sec.key); } : undefined}
+              onDrop={sec.draggable ? () => dropOnTag(sec.key) : undefined}>
+              {sec.label && (
+                <div className="prod-section-head">
+                  <button className="prod-section-toggle" onClick={() => sec.draggable && toggleCollapse(sec.key)}>
+                    {sec.draggable && <span className={'sec-chev' + (sectionCollapsed ? ' closed' : '')}><Icon name="chevron" size={15} /></span>}
+                    <span>{sec.label}</span>
+                    <span className="prod-section-count">{sec.items.length}</span>
                   </button>
-                );
-              })}
+                  {sec.draggable && (
+                    <span className="prod-section-grip" draggable
+                      onDragStart={() => setDragTag(sec.key)}
+                      onDragEnd={() => { setDragTag(null); setOverTag(null); }}
+                      title="Drag to reorder">
+                      <Icon name="grip" size={16} stroke={2.5} />
+                    </span>
+                  )}
+                </div>
+              )}
+              {!sectionCollapsed && (
+                <div className="prod-grid">
+                  {sec.items.map((p) => {
+                    const sized = Store.isSized(p);
+                    const out = p.trackQuantity && p.quantity <= 0;
+                    const low = p.trackQuantity && p.quantity > 0 && p.quantity <= db.settings.lowStock;
+                    return (
+                      <button key={p.id} className={'prod has-photo' + (out ? ' out' : '')} onClick={() => onProductClick(p)} disabled={out}>
+                        <div className={'prod-thumb' + (p.image ? '' : ' empty')}>
+                          {p.image ? <img src={p.image} alt="" /> : <Icon name="image" size={26} />}
+                        </div>
+                        <div className="prod-top">
+                          <span className="prod-name">{p.name}</span>
+                          {out ? <Badge kind="out">Out</Badge> : low ? <Badge kind="low">{p.quantity} left</Badge> : sized ? <Badge kind="muted">Sizes</Badge> : null}
+                        </div>
+                        <div className="prod-bottom">
+                          <span className="prod-price tnum">{Store.money(p.price)}</span>
+                          {p.trackQuantity && !out && !low && <span className="prod-stock tnum">{p.quantity} in stock</span>}
+                          {!p.trackQuantity && <span className="prod-stock">snack</span>}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* cart */}

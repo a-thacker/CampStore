@@ -29,6 +29,7 @@ function Icon({ name, size = 20, stroke = 2 }) {
     sun: 'M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4',
     camera: 'M3 8a2 2 0 0 1 2-2h1.5l1-1.5a1 1 0 0 1 .8-.5h5.4a1 1 0 0 1 .8.5l1 1.5H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z',
     image: 'M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5zM8.5 11a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM21 15l-5-5L5 21',
+    grip: 'M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01',
     arrowLeft: 'M19 12H5M12 19l-7-7 7-7',
   }[name];
   return (
@@ -104,6 +105,42 @@ function EmptyState({ icon, title, sub, action }) {
   );
 }
 
+/* multi-tag chip input: type + Enter/comma to add, Backspace to remove */
+function TagInput({ value = [], onChange, suggestions = [] }) {
+  const [text, setText] = useState('');
+  const norm = (s) => s.trim().toLowerCase();
+  const commit = (raw) => {
+    const parts = raw.split(',').map(norm).filter(Boolean);
+    if (!parts.length) { setText(''); return; }
+    const next = [...value];
+    parts.forEach((t) => { if (!next.includes(t)) next.push(t); });
+    onChange(next); setText('');
+  };
+  const remove = (t) => onChange(value.filter((x) => x !== t));
+  const onKey = (e) => {
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit(text); }
+    else if (e.key === 'Backspace' && !text && value.length) { remove(value[value.length - 1]); }
+  };
+  const avail = suggestions.filter((s) => !value.includes(s));
+  return (
+    <div>
+      <div className="tag-input" onClick={(e) => e.currentTarget.querySelector('input').focus()}>
+        {value.map((t) => (
+          <span key={t} className="tag-chip">{t}<button type="button" onClick={() => remove(t)} aria-label={'Remove ' + t}><Icon name="x" size={12} /></button></span>
+        ))}
+        <input value={text} placeholder={value.length ? '' : 'e.g. shirts, hats'}
+          onChange={(e) => { const v = e.target.value; if (v.includes(',')) commit(v); else setText(v); }}
+          onKeyDown={onKey} onBlur={() => commit(text)} />
+      </div>
+      {avail.length > 0 && (
+        <div className="tag-suggest">
+          {avail.slice(0, 12).map((s) => <button type="button" key={s} className="chip-add" onClick={() => commit(s)}><Icon name="plus" size={12} /> {s}</button>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* toast helper via custom event */
 function useToast() {
   return useCallback((msg) => {
@@ -125,4 +162,4 @@ function ToastHost() {
   return <div className="toast"><Icon name="check" size={18} />{msg}</div>;
 }
 
-export { Icon, Badge, Toggle, Field, Search, Modal, Avatar, EmptyState, useToast, ToastHost };
+export { Icon, Badge, Toggle, Field, Search, Modal, Avatar, EmptyState, TagInput, useToast, ToastHost };

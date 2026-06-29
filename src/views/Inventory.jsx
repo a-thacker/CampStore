@@ -1,7 +1,7 @@
 /* ============ Inventory view ============ */
 import React, { useState } from 'react';
 import { Store } from '../lib/helpers.js';
-import { Icon, Badge, Toggle, Field, Search, Modal, EmptyState } from '../components.jsx';
+import { Icon, Badge, Toggle, Field, Search, Modal, EmptyState, TagInput } from '../components.jsx';
 
 export function InventoryView({ db, api, toast }) {
   const [cat, setCat] = useState('merch');
@@ -67,7 +67,7 @@ export function InventoryView({ db, api, toast }) {
                       {!p.active && <Badge kind="muted">Archived</Badge>}
                       {out && <Badge kind="out">Out</Badge>}
                       {low && <Badge kind="low">Low</Badge>}
-                      {p.tag && <Badge kind="muted">{p.tag}</Badge>}
+                      {(p.tags || []).map((t) => <Badge key={t} kind="muted">{t}</Badge>)}
                     </div>
                   </td>
                   <td className="right tnum" style={{ fontWeight: 700 }}>{Store.money(p.price)}</td>
@@ -102,15 +102,15 @@ export function InventoryView({ db, api, toast }) {
         </table>
       </div>
 
-      {editing && <ProductModal product={editing} tags={[...new Set(db.products.map((p) => p.tag).filter(Boolean))].sort()} onSave={saveProduct} onArchive={editing.id ? archive : null} onClose={() => setEditing(null)} />}
+      {editing && <ProductModal product={editing} allTags={[...new Set(db.products.flatMap((p) => p.tags || (p.tag ? [p.tag] : [])))].sort()} onSave={saveProduct} onArchive={editing.id ? archive : null} onClose={() => setEditing(null)} />}
     </div>
   );
 }
 
-function ProductModal({ product, onSave, onArchive, onClose, tags = [] }) {
+function ProductModal({ product, onSave, onArchive, onClose, allTags = [] }) {
   const uid = (p) => p + '_' + Math.random().toString(36).slice(2, 9);
   const [name, setName] = useState(product.name || '');
-  const [tag, setTag] = useState(product.tag || '');
+  const [tags, setTags] = useState(() => Array.isArray(product.tags) ? product.tags.slice() : (product.tag ? [product.tag] : []));
   const [price, setPrice] = useState(product.price === '' ? '' : String(product.price));
   const [category, setCategory] = useState(product.category || 'merch');
   const [trackQuantity, setTrack] = useState(product.trackQuantity ?? (category === 'merch'));
@@ -134,7 +134,7 @@ function ProductModal({ product, onSave, onArchive, onClose, tags = [] }) {
       ? sizes.map((z) => ({ id: z.id || uid('size'), label: z.label.trim(), quantity: Math.max(0, parseInt(z.quantity) || 0) }))
       : null;
     onSave({
-      id: product.id, name: name.trim(), price: +(+price).toFixed(2), category, trackQuantity, tag: tag.trim().toLowerCase() || null,
+      id: product.id, name: name.trim(), price: +(+price).toFixed(2), category, trackQuantity, tags,
       quantity: trackQuantity ? (cleanSizes ? cleanSizes.reduce((s, z) => s + z.quantity, 0) : Math.max(0, parseInt(quantity || '0'))) : null,
       sizes: cleanSizes,
     });
@@ -164,10 +164,9 @@ function ProductModal({ product, onSave, onArchive, onClose, tags = [] }) {
           </select>
         </Field>
       </div>
-      <Field label="Tag (optional)">
-        <input className="input" value={tag} onChange={(e) => setTag(e.target.value)} placeholder="e.g. hats, water bottles" list="prod-tag-options" />
-        <datalist id="prod-tag-options">{tags.map((t) => <option key={t} value={t} />)}</datalist>
-        <div className="muted" style={{ fontSize: 12.5, marginTop: 6, lineHeight: 1.4 }}>Groups this product into its own section on the register. Case-insensitive — “Hat” and “hat” are the same tag.</div>
+      <Field label="Tags (optional)">
+        <TagInput value={tags} onChange={setTags} suggestions={allTags} />
+        <div className="muted" style={{ fontSize: 12.5, marginTop: 6, lineHeight: 1.4 }}>Type a tag and press Enter, or separate with commas (“shirts, hats”). A product can be in several sections. Case-insensitive.</div>
       </Field>
       <div style={{ padding: '4px 2px' }}>
         <Toggle checked={trackQuantity} onChange={(v) => { setTrack(v); if (!v) setSized(false); }} label="Track inventory quantity" />
