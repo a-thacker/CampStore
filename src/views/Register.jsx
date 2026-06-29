@@ -16,11 +16,12 @@ export function RegisterView({ db, api, week, toast }) {
   // reset payer/cart when week changes
   useEffect(() => { setCart([]); setPayerId(null); }, [week && week.id]);
 
-  // ----- tag sections: multi-tag, custom order, collapsible -----
+  // ----- tag sections: multi-tag, custom order, collapsible, drag-reorder -----
   const COLLAPSE_KEY = 'camp_collapsed_tags';
   const [collapsed, setCollapsed] = useState(() => { try { return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '[]')); } catch (e) { return new Set(); } });
-  const [dragTag, setDragTag] = useState(null);
-  const [overTag, setOverTag] = useState(null);
+  const [drag, setDrag] = useState(null);            // tag currently being dragged
+  const [indicator, setIndicator] = useState(null);  // insertion slot index
+  const sectionEls = useRef({});
   const isCollapsed = (t) => collapsed.has(cat + ':' + t);
   const toggleCollapse = (t) => setCollapsed((prev) => {
     const n = new Set(prev); const k = cat + ':' + t;
@@ -40,23 +41,66 @@ export function RegisterView({ db, api, week, toast }) {
     ...allTags.filter((t) => !orderPref.includes(t)).sort(),
   ];
   const titleCase = (s) => s.replace(/\b\w/g, (c) => c.toUpperCase());
-  const sections = [];
+  const tagSections = [];
   orderedTags.forEach((t) => {
     const items = inCat.filter((p) => (p.tags || []).includes(t) && matchQ(p)).slice().sort(outSort);
-    if (items.length) sections.push({ key: t, label: titleCase(t), items, draggable: true });
+    if (items.length) tagSections.push({ key: t, label: titleCase(t), items });
   });
-  const untagged = inCat.filter((p) => !(p.tags && p.tags.length) && matchQ(p)).slice().sort(outSort);
-  if (untagged.length) sections.push({ key: '__none', label: orderedTags.length ? 'Other' : null, items: untagged, draggable: false });
-  const anyVisible = sections.length > 0;
+  const untaggedItems = inCat.filter((p) => !(p.tags && p.tags.length) && matchQ(p)).slice().sort(outSort);
+  const otherSection = untaggedItems.length ? { label: tagSections.length ? 'Other' : null, items: untaggedItems } : null;
+  const anyVisible = tagSections.length > 0 || !!otherSection;
 
-  function dropOnTag(targetKey) {
-    if (!dragTag || dragTag === targetKey) { setDragTag(null); setOverTag(null); return; }
-    let g = (db.settings.tagOrder || []).slice();
-    [dragTag, targetKey].forEach((t) => { if (!g.includes(t)) g.push(t); });
-    g = g.filter((t) => t !== dragTag);
-    g.splice(g.indexOf(targetKey), 0, dragTag);
-    saveTagOrder(g); setDragTag(null); setOverTag(null);
+  // pointer-based vertical reorder: capture section midpoints once, then track
+  function startDrag(e, tag) {
+    e.preventDefault();
+    const nodes = tagSections.map((s) => s.key);
+    const mids = nodes.map((k) => { const r = sectionEls.current[k].getBoundingClientRect(); return r.top + r.height / 2; });
+    const fromIndex = nodes.indexOf(tag);
+    let toIndex = fromIndex;
+    setDrag(tag); setIndicator(fromIndex);
+    document.body.style.userSelect = 'none';
+    const onMove = (ev) => {
+      const y = ev.clientY; let idx = 0;
+      for (let i = 0; i < mids.length; i++) { if (y > mids[i]) idx = i + 1; }
+      toIndex = idx; setIndicator(idx);
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.style.userSelect = '';
+      if (toIndex !== fromIndex && toIndex !== fromIndex + 1) {
+        const a = nodes.slice(); const [x] = a.splice(fromIndex, 1);
+        a.splice(toIndex > fromIndex ? toIndex - 1 : toIndex, 0, x);
+        const prev = db.settings.tagOrder || [];
+        saveTagOrder([...a, ...prev.filter((t) => !a.includes(t))]);
+      }
+      setDrag(null); setIndicator(null);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
   }
+
+  const renderProduct = (p) => {
+    const sized = Store.isSized(p);
+    const out = p.trackQuantity && p.quantity <= 0;
+    const low = p.trackQuantity && p.quantity > 0 && p.quantity <= db.settings.lowStock;
+    return (
+      <button key={p.id} className={'prod has-photo' + (out ? ' out' : '')} onClick={() => onProductClick(p)} disabled={out}>
+        <div className={'prod-thumb' + (p.image ? '' : ' empty')}>
+          {p.image ? <img src={p.image} alt="" /> : <Icon name="image" size={26} />}
+        </div>
+        <div className="prod-top">
+          <span className="prod-name">{p.name}</span>
+          {out ? <Badge kind="out">Out</Badge> : low ? <Badge kind="low">{p.quantity} left</Badge> : sized ? <Badge kind="muted">Sizes</Badge> : null}
+        </div>
+        <div className="prod-bottom">
+          <span className="prod-price tnum">{Store.money(p.price)}</span>
+          {p.trackQuantity && !out && !low && <span className="prod-stock tnum">{p.quantity} in stock</span>}
+          {!p.trackQuantity && <span className="prod-stock">snack</span>}
+        </div>
+      </button>
+    );
+  };
 
   const campers = Store.weekCampers(db, week.id);
   const tabs = Store.weekTabs(db, week.id);
@@ -107,58 +151,46 @@ export function RegisterView({ db, api, week, toast }) {
         </div>
         {!anyVisible ? (
           <EmptyState icon="search" title="No products found" sub="Try a different search." />
-        ) : sections.map((sec) => {
-          const sectionCollapsed = sec.draggable && isCollapsed(sec.key);
-          return (
-            <div key={sec.key}
-              className={'prod-section' + (overTag === sec.key ? ' over' : '')}
-              onDragOver={sec.draggable ? (e) => { e.preventDefault(); if (overTag !== sec.key) setOverTag(sec.key); } : undefined}
-              onDrop={sec.draggable ? () => dropOnTag(sec.key) : undefined}>
-              {sec.label && (
-                <div className="prod-section-head">
-                  <button className="prod-section-toggle" onClick={() => sec.draggable && toggleCollapse(sec.key)}>
-                    {sec.draggable && <span className={'sec-chev' + (sectionCollapsed ? ' closed' : '')}><Icon name="chevron" size={15} /></span>}
-                    <span>{sec.label}</span>
-                    <span className="prod-section-count">{sec.items.length}</span>
-                  </button>
-                  {sec.draggable && (
-                    <span className="prod-section-grip" draggable
-                      onDragStart={() => setDragTag(sec.key)}
-                      onDragEnd={() => { setDragTag(null); setOverTag(null); }}
-                      title="Drag to reorder">
-                      <Icon name="grip" size={16} stroke={2.5} />
-                    </span>
-                  )}
-                </div>
-              )}
-              {!sectionCollapsed && (
-                <div className="prod-grid">
-                  {sec.items.map((p) => {
-                    const sized = Store.isSized(p);
-                    const out = p.trackQuantity && p.quantity <= 0;
-                    const low = p.trackQuantity && p.quantity > 0 && p.quantity <= db.settings.lowStock;
-                    return (
-                      <button key={p.id} className={'prod has-photo' + (out ? ' out' : '')} onClick={() => onProductClick(p)} disabled={out}>
-                        <div className={'prod-thumb' + (p.image ? '' : ' empty')}>
-                          {p.image ? <img src={p.image} alt="" /> : <Icon name="image" size={26} />}
-                        </div>
-                        <div className="prod-top">
-                          <span className="prod-name">{p.name}</span>
-                          {out ? <Badge kind="out">Out</Badge> : low ? <Badge kind="low">{p.quantity} left</Badge> : sized ? <Badge kind="muted">Sizes</Badge> : null}
-                        </div>
-                        <div className="prod-bottom">
-                          <span className="prod-price tnum">{Store.money(p.price)}</span>
-                          {p.trackQuantity && !out && !low && <span className="prod-stock tnum">{p.quantity} in stock</span>}
-                          {!p.trackQuantity && <span className="prod-stock">snack</span>}
-                        </div>
+        ) : (
+          <>
+            {tagSections.map((sec, di) => {
+              const collapsedSec = isCollapsed(sec.key);
+              return (
+                <React.Fragment key={sec.key}>
+                  {drag && indicator === di && <div className="prod-drop-line" />}
+                  <div className={'prod-section' + (collapsedSec ? ' collapsed' : '') + (drag === sec.key ? ' dragging' : '')}
+                    ref={(el) => { sectionEls.current[sec.key] = el; }}>
+                    <div className="prod-section-head">
+                      <button className="prod-section-toggle" onClick={() => toggleCollapse(sec.key)}>
+                        <span className={'sec-chev' + (collapsedSec ? ' closed' : '')}><Icon name="chevron" size={15} /></span>
+                        <span>{sec.label}</span>
+                        <span className="prod-section-count">{sec.items.length}</span>
                       </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
+                      <span className="prod-section-grip" onPointerDown={(e) => startDrag(e, sec.key)} title="Drag to reorder">
+                        <Icon name="grip" size={16} stroke={2.5} />
+                      </span>
+                    </div>
+                    {!collapsedSec && <div className="prod-grid">{sec.items.map(renderProduct)}</div>}
+                  </div>
+                </React.Fragment>
+              );
+            })}
+            {drag && indicator === tagSections.length && <div className="prod-drop-line" />}
+            {otherSection && (
+              <div className="prod-section">
+                {otherSection.label && (
+                  <div className="prod-section-head">
+                    <span className="prod-section-toggle" style={{ cursor: 'default' }}>
+                      <span>{otherSection.label}</span>
+                      <span className="prod-section-count">{otherSection.items.length}</span>
+                    </span>
+                  </div>
+                )}
+                <div className="prod-grid">{otherSection.items.map(renderProduct)}</div>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       {/* cart */}
