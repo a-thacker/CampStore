@@ -156,7 +156,7 @@ export function useStore(session) {
     bulkAddCampers: (weekId, rows) => after(supabase.from('campers').insert(
       rows.map((r) => ({
         week_id: weekId, first_name: r.first, last_name: r.last,
-        age: r.age, cabin: r.cabin, allow_purchase: true, allow_over_balance: false,
+        age: r.age, cabin: r.cabin, balance: r.balance || 0, allow_purchase: true, allow_over_balance: false,
       })),
     )),
     reopenCamper: (id) => after(supabase.from('campers')

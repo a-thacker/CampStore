@@ -264,16 +264,18 @@ function BulkModal({ onAdd, onClose }) {
       const last = nameParts.slice(1).join(' ') || '';
       const age = parts[1] && !isNaN(+parts[1]) ? parseInt(parts[1]) : null;
       const cabin = parts[2] || '';
-      return { first, last, age, cabin };
+      const balRaw = (parts[3] || '').replace(/[$,\s]/g, '');
+      const balance = balRaw && !isNaN(+balRaw) ? Math.round(parseFloat(balRaw) * 100) / 100 : 0;
+      return { first, last, age, cabin, balance };
     }).filter((r) => r.first);
   }, [text]);
   return (
     <Modal title="Bulk add campers" wide onClose={onClose}
       footer={<><button className="btn" onClick={onClose}>Cancel</button>
         <button className="btn primary" disabled={parsed.length === 0} onClick={() => onAdd(parsed)}>Add {parsed.length} camper{parsed.length !== 1 ? 's' : ''}</button></>}>
-      <Field label="Paste roster — one camper per line" help="Format: Name, Age, Cabin (comma or tab separated). Age and cabin are optional. Works with pasted spreadsheet columns.">
+      <Field label="Paste roster — one camper per line" help={'Format: Name, Age, Cabin, Starting balance (comma or tab separated). Every field after the name is optional — leave a slot empty to skip it, e.g. “John Smith,,,60” adds John with $60 and no age or cabin.'}>
         <textarea className="textarea" style={{ minHeight: 160, fontFamily: 'inherit' }} value={text} onChange={(e) => setText(e.target.value)}
-          placeholder={'First Last, Age, Cabin\nMason Reyes, 10, Cedar\nAva Thompson, 9, Birch\nLiam Nguyen'} autoFocus />
+          placeholder={'Name, Age, Cabin, Balance\nMason Reyes, 10, Cedar, 50\nAva Thompson, 9, Birch\nJohn Smith,,,60'} autoFocus />
       </Field>
       {parsed.length > 0 && (
         <div className="card" style={{ overflow: 'hidden' }}>
@@ -282,7 +284,7 @@ function BulkModal({ onAdd, onClose }) {
             <table className="tbl">
               <tbody>
                 {parsed.slice(0, 50).map((r, i) => (
-                  <tr key={i}><td style={{ fontWeight: 700 }}>{r.first} {r.last}</td><td className="tnum">{r.age || '—'}</td><td>{r.cabin || '—'}</td></tr>
+                  <tr key={i}><td style={{ fontWeight: 700 }}>{r.first} {r.last}</td><td className="tnum">{r.age || '—'}</td><td>{r.cabin || '—'}</td><td className="right tnum" style={{ fontWeight: 700, color: r.balance ? 'var(--green-700)' : 'var(--ink-3)' }}>{r.balance ? Store.money(r.balance) : '—'}</td></tr>
                 ))}
               </tbody>
             </table>
