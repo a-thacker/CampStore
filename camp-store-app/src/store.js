@@ -13,6 +13,7 @@ const mapWeek = (r) => ({
 });
 const mapTab = (r) => ({
   id: r.id, weekId: r.week_id, name: r.name, balance: Number(r.balance), settled: r.settled,
+  mode: r.mode || 'settle', allowOverBalance: !!r.allow_over_balance,
 });
 const mapCamper = (r) => ({
   id: r.id, weekId: r.week_id, tabId: r.tab_id, first: r.first_name, last: r.last_name,
@@ -28,7 +29,7 @@ const mapItems = (items) => (items || []).map((l) => ({
 const mapTxn = (r) => ({
   id: r.id, weekId: r.week_id, kind: r.kind, payerType: r.payer_type,
   payerId: r.camper_id || r.tab_id, items: mapItems(r.items), total: Number(r.total),
-  method: r.method, refOf: r.ref_of, returned: r.returned,
+  method: r.method, refOf: r.ref_of, returned: r.returned, memberId: r.member_id || null,
   ts: new Date(r.created_at).getTime(), squarePaymentId: r.square_payment_id,
 });
 
@@ -152,7 +153,7 @@ export function useStore(session) {
       first_name: c.first, last_name: c.last, age: c.age, cabin: c.cabin, notes: c.notes,
       allow_purchase: c.allowPurchase, allow_over_balance: c.allowOverBalance,
     }).eq('id', id)),
-    deleteCamper: (id) => after(supabase.from('campers').delete().eq('id', id)),
+    deleteCamper: (id) => after(supabase.rpc('delete_camper', { p_camper_id: id })),
     bulkAddCampers: (weekId, rows) => after(supabase.from('campers').insert(
       rows.map((r) => ({
         week_id: weekId, first_name: r.first, last_name: r.last,
@@ -162,23 +163,42 @@ export function useStore(session) {
     reopenCamper: (id) => after(supabase.from('campers')
       .update({ cashed_out: false, cashed_out_at: null, allow_purchase: true }).eq('id', id)),
 
-    /* ----- tabs ----- */
-    saveTab: async ({ id, name, members, weekId }) => {
+    /* ----- family tabs ----- */
+    // register or update an entire family (tab + all its members) in one step
+    saveFamily: async ({ id, name, mode, allowOverBalance, startingBalance, members, removedIds, weekId }) => {
       let tabId = id;
-      if (id) {
-        check(await supabase.from('tabs').update({ name }).eq('id', id));
-      } else {
+      if (!tabId) {
         const { data, error } = await supabase.from('tabs')
-          .insert({ week_id: weekId, name }).select().single();
+          .insert({ week_id: weekId, name, mode, allow_over_balance: allowOverBalance, balance: mode === 'prepaid' ? (startingBalance || 0) : 0 })
+          .select().single();
         if (error) throw new Error(error.message);
         tabId = data.id;
+        if (mode === 'prepaid' && startingBalance) {
+          check(await supabase.from('transactions').insert({
+            week_id: weekId, kind: 'deposit', payer_type: 'tab', tab_id: tabId, items: [], total: startingBalance, method: 'deposit',
+          }));
+        }
+      } else {
+        check(await supabase.from('tabs').update({ name, mode, allow_over_balance: allowOverBalance }).eq('id', tabId));
       }
-      // assign members, unassign anyone removed from this tab in this week
-      check(await supabase.from('campers').update({ tab_id: tabId }).in('id', members.length ? members : ['00000000-0000-0000-0000-000000000000']));
-      check(await supabase.from('campers').update({ tab_id: null })
-        .eq('tab_id', tabId).not('id', 'in', `(${members.length ? members.join(',') : '00000000-0000-0000-0000-000000000000'})`));
+      for (const m of members) {
+        if (m.camperId) {
+          check(await supabase.from('campers').update({
+            first_name: m.first, last_name: m.last, age: m.age, cabin: m.cabin, allow_purchase: m.allowPurchase, tab_id: tabId,
+          }).eq('id', m.camperId));
+        } else {
+          check(await supabase.from('campers').insert({
+            week_id: weekId, first_name: m.first, last_name: m.last, age: m.age, cabin: m.cabin,
+            allow_purchase: m.allowPurchase, allow_over_balance: false, tab_id: tabId,
+          }));
+        }
+      }
+      if (removedIds && removedIds.length) {
+        check(await supabase.from('campers').update({ tab_id: null }).in('id', removedIds));
+      }
       await load();
     },
+    loadTabBalance: (tabId, amount) => after(supabase.rpc('load_tab_balance', { p_tab_id: tabId, p_amount: amount })),
     settleTab: (id) => after(supabase.rpc('settle_tab', { p_tab_id: id })),
 
     /* ----- money movements (RPCs) ----- */
@@ -186,10 +206,11 @@ export function useStore(session) {
     cashOut: (camperId) => after(supabase.rpc('cash_out_camper', { p_camper_id: camperId })),
 
     /* ----- the sale ----- */
-    recordSale: ({ weekId, payerType, payerId, items, method, squarePaymentId = null }) =>
+    recordSale: ({ weekId, payerType, payerId, items, method, squarePaymentId = null, memberId = null }) =>
       after(supabase.rpc('record_sale', {
         p_week_id: weekId, p_payer_type: payerType, p_payer_id: payerId,
         p_items: items.map(toRpcItem), p_method: method, p_square_payment_id: squarePaymentId,
+        p_member_id: memberId,
       })),
     processReturn: (txnId) => after(supabase.rpc('process_return', { p_txn_id: txnId })),
   };

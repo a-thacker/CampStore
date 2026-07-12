@@ -9,12 +9,13 @@ export function RegisterView({ db, api, week, toast }) {
   const [q, setQ] = useState('');
   const [cart, setCart] = useState([]); // {productId, name, category, unitPrice, qty}
   const [payerId, setPayerId] = useState(null); // camper id OR tab id
+  const [memberId, setMemberId] = useState(null); // when payer is a family tab: who's at the register
   const [pickOpen, setPickOpen] = useState(false);
   const [checkout, setCheckout] = useState(false);
   const [sizeFor, setSizeFor] = useState(null); // product awaiting a size choice
 
   // reset payer/cart when week changes
-  useEffect(() => { setCart([]); setPayerId(null); }, [week && week.id]);
+  useEffect(() => { setCart([]); setPayerId(null); setMemberId(null); }, [week && week.id]);
 
   // ----- tag sections: multi-tag, custom order, collapsible, drag-reorder -----
   const COLLAPSE_KEY = 'camp_collapsed_tags';
@@ -112,6 +113,9 @@ export function RegisterView({ db, api, week, toast }) {
     if (t) return { kind: 'tab', ...t };
     return null;
   }, [payerId, db]);
+  const familyMembers = payer && payer.kind === 'tab' ? campers.filter((c) => c.tabId === payer.id) : [];
+  const activeMember = memberId ? familyMembers.find((m) => m.id === memberId) : null;
+  const memberBlocked = !!(activeMember && !activeMember.allowPurchase);
 
   function onProductClick(p) {
     if (Store.isSized(p)) { setSizeFor(p); return; }
@@ -202,11 +206,11 @@ export function RegisterView({ db, api, week, toast }) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="payer-name">
                   {payer.kind === 'tab' ? payer.name : payer.first + ' ' + payer.last}
-                  {payer.kind === 'tab' && <Badge kind="tab">Family Tab</Badge>}
+                  {payer.kind === 'tab' && <Badge kind="tab">{payer.mode === 'prepaid' ? 'Family · Prepaid' : 'Family Tab'}</Badge>}
                 </div>
                 <div className="payer-meta tnum">
                   {payer.kind === 'tab'
-                    ? 'Tab owed: ' + Store.money(payer.balance)
+                    ? (payer.mode === 'prepaid' ? 'Balance: ' : 'Owed: ') + Store.money(payer.balance)
                     : 'Balance: ' + Store.money(payer.balance) + '  ·  ' + (payer.cabin || 'No cabin')}
                 </div>
               </div>
@@ -215,15 +219,28 @@ export function RegisterView({ db, api, week, toast }) {
           ) : (
             <button className="payer-empty" onClick={() => setPickOpen(true)}>
               <Icon name="user" size={19} />
-              <span>Select camper or family tab</span>
+              <span>Select camper or family</span>
               <Icon name="chevron" size={18} />
             </button>
+          )}
+          {payer && payer.kind === 'tab' && familyMembers.length > 0 && (
+            <div className="payer-members">
+              <button className={'payer-member-chip' + (!memberId ? ' active' : '')} onClick={() => setMemberId(null)}>Anyone in family</button>
+              {familyMembers.map((m) => (
+                <button key={m.id} className={'payer-member-chip' + (memberId === m.id ? ' active' : '')} onClick={() => setMemberId(m.id)}>
+                  {m.first} {!m.allowPurchase && <Icon name="alert" size={12} />}
+                </button>
+              ))}
+            </div>
           )}
           {payer && payer.kind === 'camper' && payer.cashedOut && (
             <div className="payer-warn"><Icon name="alert" size={15} /> This camper has been cashed out — account closed</div>
           )}
           {payer && payer.kind === 'camper' && !payer.cashedOut && !payer.allowPurchase && (
             <div className="payer-warn"><Icon name="alert" size={15} /> Purchases are paused for this camper</div>
+          )}
+          {memberBlocked && (
+            <div className="payer-warn"><Icon name="alert" size={15} /> Purchases are paused for {activeMember.first}</div>
           )}
         </div>
 
@@ -251,7 +268,7 @@ export function RegisterView({ db, api, week, toast }) {
             <span>Total <span className="muted tnum" style={{ fontWeight: 600 }}>· {count} item{count !== 1 ? 's' : ''}</span></span>
             <span className="tnum">{Store.money(subtotal)}</span>
           </div>
-          <button className="btn primary lg block" disabled={cart.length === 0 || !payer || (payer.kind === 'camper' && !payer.allowPurchase)}
+          <button className="btn primary lg block" disabled={cart.length === 0 || !payer || (payer.kind === 'camper' && !payer.allowPurchase) || memberBlocked}
             onClick={() => setCheckout(true)}>
             <Icon name="check" size={20} /> Charge {Store.money(subtotal)}
           </button>
@@ -259,13 +276,13 @@ export function RegisterView({ db, api, week, toast }) {
       </div>
 
       {pickOpen && (
-        <PayerPicker db={db} week={week} onPick={(id) => { setPayerId(id); setPickOpen(false); }} onClose={() => setPickOpen(false)} />
+        <PayerPicker db={db} week={week} onPick={(id) => { setPayerId(id); setMemberId(null); setPickOpen(false); }} onClose={() => setPickOpen(false)} />
       )}
       {sizeFor && (
         <SizePicker product={sizeFor} onPick={(z) => { add(sizeFor, z); setSizeFor(null); }} onClose={() => setSizeFor(null)} />
       )}
       {checkout && payer && (
-        <CheckoutModal db={db} api={api} week={week} payer={payer} cart={cart} subtotal={subtotal} toast={toast}
+        <CheckoutModal db={db} api={api} week={week} payer={payer} member={activeMember} cart={cart} subtotal={subtotal} toast={toast}
           onClose={() => setCheckout(false)}
           onDone={() => { setCheckout(false); setCart([]); toast('Sale complete'); }} />
       )}
@@ -295,7 +312,7 @@ function SizePicker({ product, onPick, onClose }) {
 /* ---- account picker ---- */
 function PayerPicker({ db, week, onPick, onClose }) {
   const [q, setQ] = useState('');
-  const campers = Store.weekCampers(db, week.id);
+  const campers = Store.weekCampers(db, week.id).filter((c) => !c.tabId);
   const tabs = Store.weekTabs(db, week.id);
   const ql = q.toLowerCase();
   const fc = campers.filter((c) => (c.first + ' ' + c.last + ' ' + (c.cabin || '')).toLowerCase().includes(ql));
@@ -306,15 +323,15 @@ function PayerPicker({ db, week, onPick, onClose }) {
       <div style={{ maxHeight: 380, overflowY: 'auto', margin: '0 -4px' }}>
         {week.type === 'family' && ft.length > 0 && (
           <>
-            <div className="pick-group">Family Tabs</div>
+            <div className="pick-group">Families</div>
             {ft.map((t) => (
               <button key={t.id} className="pick-row" onClick={() => onPick(t.id)}>
                 <Avatar name={t.name} tab />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="pick-name">{t.name}</div>
-                  <div className="pick-meta tnum muted">Tab owed {Store.money(t.balance)}</div>
+                  <div className="pick-meta tnum muted">{t.mode === 'prepaid' ? 'Balance' : 'Owed'} {Store.money(t.balance)}</div>
                 </div>
-                <Badge kind="tab">Tab</Badge>
+                <Badge kind="tab">{t.mode === 'prepaid' ? 'Prepaid' : 'Tab'}</Badge>
               </button>
             ))}
             <div className="pick-group">Individuals</div>
@@ -336,8 +353,9 @@ function PayerPicker({ db, week, onPick, onClose }) {
 }
 
 /* ---- checkout ---- */
-function CheckoutModal({ db, api, week, payer, cart, subtotal, toast, onClose, onDone }) {
+function CheckoutModal({ db, api, week, payer, member, cart, subtotal, toast, onClose, onDone }) {
   const isTab = payer.kind === 'tab';
+  const prepaid = isTab && payer.mode === 'prepaid';
   const [method, setMethod] = useState(isTab ? 'tab' : 'balance');
   const [processing, setProcessing] = useState(false);
   const cardRef = useRef(null);       // DOM node for Square card form
@@ -347,11 +365,11 @@ function CheckoutModal({ db, api, week, payer, cart, subtotal, toast, onClose, o
 
   const bal = payer.balance || 0;
   const afterBal = +(bal - subtotal).toFixed(2);
-  const overBalance = !isTab && method === 'balance' && afterBal < 0;
+  const overBalance = ((!isTab && method === 'balance') || (prepaid && method === 'tab')) && afterBal < 0;
   const blockedOver = overBalance && !payer.allowOverBalance;
 
   const methods = isTab
-    ? [['tab', 'Add to Tab', 'tab'], ['cash', 'Cash', 'cash'], ['card', 'Card', 'card']]
+    ? [['tab', prepaid ? 'Family Balance' : 'Add to Tab', prepaid ? 'wallet' : 'tab'], ['cash', 'Cash', 'cash'], ['card', 'Card', 'card']]
     : [['balance', 'Prepaid Balance', 'wallet'], ['cash', 'Cash', 'cash'], ['card', 'Card', 'card']];
 
   // mount / tear down the Square card form when 'card' is selected
@@ -384,7 +402,7 @@ function CheckoutModal({ db, api, week, payer, cart, subtotal, toast, onClose, o
       }
       await api.recordSale({
         weekId: week.id, payerType: payer.kind, payerId: payer.id,
-        items: cart, method, squarePaymentId,
+        items: cart, method, squarePaymentId, memberId: isTab && member ? member.id : null,
       });
       onDone();
     } catch (e) {
@@ -397,7 +415,7 @@ function CheckoutModal({ db, api, week, payer, cart, subtotal, toast, onClose, o
     <>
       <button className="btn" onClick={onClose} disabled={processing}>Cancel</button>
       <button className="btn primary" onClick={confirm} disabled={blockedOver || processing || (method === 'card' && hasSquare && !cardReady)}>
-        {processing ? 'Processing…' : isTab && method === 'tab' ? 'Add to Tab' : 'Complete Sale'}
+        {processing ? 'Processing…' : isTab && method === 'tab' && !prepaid ? 'Add to Tab' : 'Complete Sale'}
       </button>
     </>
   );
@@ -408,9 +426,9 @@ function CheckoutModal({ db, api, week, payer, cart, subtotal, toast, onClose, o
         <div className="co-payer">
           <Avatar name={isTab ? payer.name : payer.first + ' ' + payer.last} tab={isTab} />
           <div>
-            <div style={{ fontWeight: 700 }}>{isTab ? payer.name : payer.first + ' ' + payer.last}</div>
+            <div style={{ fontWeight: 700 }}>{isTab ? payer.name : payer.first + ' ' + payer.last}{isTab && member ? ' · for ' + member.first : ''}</div>
             <div className="muted tnum" style={{ fontSize: 13 }}>
-              {isTab ? 'Current tab ' + Store.money(payer.balance) : 'Balance ' + Store.money(bal)}
+              {isTab ? (prepaid ? 'Current balance ' : 'Current tab ') + Store.money(payer.balance) : 'Balance ' + Store.money(bal)}
             </div>
           </div>
           <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
@@ -442,8 +460,19 @@ function CheckoutModal({ db, api, week, payer, cart, subtotal, toast, onClose, o
           )}
         </div>
       )}
-      {method === 'tab' && (
+      {method === 'tab' && !prepaid && (
         <div className="co-note"><Icon name="tab" size={16} /> Tab will increase to <b className="tnum">{Store.money(payer.balance + subtotal)}</b>, settled at end of week.</div>
+      )}
+      {method === 'tab' && prepaid && (
+        <div className={'co-note' + (blockedOver ? ' err' : overBalance ? ' warn' : '')}>
+          {blockedOver ? (
+            <><Icon name="alert" size={16} /> Insufficient family balance. This family isn’t allowed to go over balance — use cash or card, or load more funds.</>
+          ) : overBalance ? (
+            <><Icon name="alert" size={16} /> Family balance will go negative to <b className="tnum">{Store.money(afterBal)}</b> (over-balance allowed).</>
+          ) : (
+            <><Icon name="wallet" size={16} /> New family balance after sale: <b className="tnum">{Store.money(afterBal)}</b></>
+          )}
+        </div>
       )}
       {method === 'card' && (
         <div className="co-note" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 12 }}>

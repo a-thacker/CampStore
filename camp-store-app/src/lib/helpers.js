@@ -25,15 +25,16 @@ function allSales(db) {
 }
 function outstandingTabs(db, weekId) {
   return +db.tabs.filter((t) => (weekId ? t.weekId === weekId : true) && !t.settled)
-    .reduce((s, t) => s + t.balance, 0).toFixed(2);
+    .reduce((s, t) => s + (t.mode === 'prepaid' ? Math.max(0, -t.balance) : Math.max(0, t.balance)), 0).toFixed(2);
 }
 function lowStock(db) {
   return db.products.filter((p) => p.active && p.trackQuantity && p.quantity <= db.settings.lowStock);
 }
-function camperSpent(db, camperId) {
-  return +db.transactions.filter((t) => SALEKINDS.includes(t.kind) && t.payerType === 'camper' && t.payerId === camperId)
+function spentBy(db, payerType, payerId) {
+  return +db.transactions.filter((t) => SALEKINDS.includes(t.kind) && t.payerType === payerType && t.payerId === payerId)
     .reduce((s, t) => s + t.total, 0).toFixed(2);
 }
+function camperSpent(db, camperId) { return spentBy(db, 'camper', camperId); }
 function ledgerFor(db, payerType, payerId) {
   return db.transactions.filter((t) => t.payerType === payerType && t.payerId === payerId)
     .sort((a, b) => b.ts - a.ts);
@@ -42,5 +43,5 @@ function ledgerFor(db, payerType, payerId) {
 export const Store = {
   money, isSized, sizeTotal, totalQty, findSize,
   weekCampers, weekTabs, weekTx, weekSales, allSales,
-  outstandingTabs, lowStock, camperSpent, ledgerFor,
+  outstandingTabs, lowStock, camperSpent, spentBy, ledgerFor,
 };
