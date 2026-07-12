@@ -37,7 +37,7 @@ export function CampersView({ db, api, week, toast }) {
   }
   async function loadBalance(target, amount) {
     await wrap(() => target.kind === 'tab' ? api.loadTabBalance(target.entity.id, amount) : api.loadBalance(target.entity.id, amount),
-      Store.money(amount) + (amount < 0 ? ' adjusted on ' : ' added to ') + target.entity.name + '\u2019s balance');
+      Store.money(amount) + (amount < 0 ? ' adjusted on ' : ' added to ') + target.entity.name + '’s balance');
     setLoadFor(null);
   }
   async function returnTransaction(txn) {
@@ -49,7 +49,7 @@ export function CampersView({ db, api, week, toast }) {
     setCashOutFor(null);
   }
   async function reopenCamper(c) {
-    await wrap(() => api.reopenCamper(c.id), c.first + '\u2019s account reopened');
+    await wrap(() => api.reopenCamper(c.id), c.first + '’s account reopened');
   }
   async function bulkAdd(rows) {
     await wrap(() => api.bulkAddCampers(week.id, rows), rows.length + ' campers added');
@@ -90,7 +90,7 @@ export function CampersView({ db, api, week, toast }) {
                     <Avatar name={t.name} tab />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 800, fontSize: 15 }}>{t.name}</div>
-                      <div className="muted" style={{ fontSize: 12.5, fontWeight: 600 }}>{members.length} member{members.length !== 1 ? 's' : ''} · {prepaid ? 'Prepaid balance' : 'Settles at week\u2019s end'}</div>
+                      <div className="muted" style={{ fontSize: 12.5, fontWeight: 600 }}>{members.length} member{members.length !== 1 ? 's' : ''} · {prepaid ? 'Prepaid balance' : 'Settles at week’s end'}</div>
                     </div>
                     <button className="btn ghost sm" onClick={() => setHistoryFor({ kind: 'tab', entity: t })} title="Tab history"><Icon name="receipt" size={16} /></button>
                     <button className="btn ghost icon sm" onClick={() => setFamilyModal({ id: t.id })}><Icon name="edit" size={16} /></button>
@@ -304,7 +304,7 @@ function MemberModal({ member, onSave, onRemoveFromFamily, onDelete, onHistory, 
         <div><div style={{ fontWeight: 700, fontSize: 14 }}>Allowed to make purchases</div><div className="muted" style={{ fontSize: 12.5 }}>Turn off to pause spending just for this person</div></div>
         <Toggle checked={f.allowPurchase} onChange={(v) => set('allowPurchase', v)} />
       </div>
-      <div className="co-note"><Icon name="tab" size={15} /> This member spends from the family\u2019s shared tab. Balance and over-balance settings are managed on the family, not per person.</div>
+      <div className="co-note"><Icon name="tab" size={15} /> This member spends from the family’s shared tab. Balance and over-balance settings are managed on the family, not per person.</div>
     </Modal>
   );
 }
@@ -410,7 +410,7 @@ function FamilyModal({ tab, members, unassigned, onSave, onClose }) {
       <Field label="How will this family pay?">
         <div className="pay-methods" style={{ gridTemplateColumns: '1fr 1fr' }}>
           <button type="button" className={'pay-method' + (mode === 'settle' ? ' active' : '')} onClick={() => setMode('settle')}>
-            <Icon name="tab" size={20} /><span>Settle at week\u2019s end</span>
+            <Icon name="tab" size={20} /><span>Settle at week’s end</span>
           </button>
           <button type="button" className={'pay-method' + (mode === 'prepaid' ? ' active' : '')} onClick={() => setMode('prepaid')}>
             <Icon name="wallet" size={20} /><span>Prepaid balance</span>
@@ -418,7 +418,7 @@ function FamilyModal({ tab, members, unassigned, onSave, onClose }) {
         </div>
       </Field>
       {mode === 'settle' && (
-        <div className="co-note"><Icon name="tab" size={15} /> Purchases accumulate as a tab owed by the family; you\u2019ll collect payment and settle it at the end of the week. This is the most common choice.</div>
+        <div className="co-note"><Icon name="tab" size={15} /> Purchases accumulate as a tab owed by the family; you’ll collect payment and settle it at the end of the week. This is the most common choice.</div>
       )}
       {mode === 'prepaid' && (
         <>
@@ -545,15 +545,15 @@ function CashOutModal({ target, onConfirm, onClose }) {
       <div className={'co-note' + (owes ? ' err' : '')}>
         <Icon name={owes ? 'alert' : 'cash'} size={16} />
         {owes
-          ? <span>This {isTab ? 'family\u2019s balance' : 'camper\u2019s balance'} is negative. Collect <b className="tnum">{Store.money(Math.abs(balance))}</b> before closing.</span>
+          ? <span>This {isTab ? 'family’s balance' : 'camper’s balance'} is negative. Collect <b className="tnum">{Store.money(Math.abs(balance))}</b> before closing.</span>
           : balance > 0
             ? <span>Return <b className="tnum">{Store.money(balance)}</b> of remaining balance{isTab ? ' to the family' : ' to the camper'}.</span>
             : <span>Balance is <b className="tnum">$0.00</b> — nothing to return.</span>}
       </div>
       <div className="muted" style={{ fontSize: 13, lineHeight: 1.5 }}>
         {isTab
-          ? <>Closing sets the family\u2019s balance to <b>$0.00</b>, records the settlement, and marks the tab <b>settled</b>.</>
-          : <>Cashing out sets the balance to <b>$0.00</b>, records a cash-out in their history, and <b>closes the account to further purchases</b> for the rest of the week. You can reopen it later from the camper\u2019s details.</>}
+          ? <>Closing sets the family’s balance to <b>$0.00</b>, records the settlement, and marks the tab <b>settled</b>.</>
+          : <>Cashing out sets the balance to <b>$0.00</b>, records a cash-out in their history, and <b>closes the account to further purchases</b> for the rest of the week. You can reopen it later from the camper’s details.</>}
       </div>
     </Modal>
   );
