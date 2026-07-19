@@ -24,6 +24,7 @@ const mapCamper = (r) => ({
 const mapItems = (items) => (items || []).map((l) => ({
   productId: l.product_id, name: l.name, category: l.category, qty: l.qty,
   sizeId: l.size_id || null, sizeLabel: l.size_label || null,
+  returnedQty: l.returned_qty || 0,
   unitPrice: Number(l.unit_price), lineTotal: Number(l.line_total),
 }));
 const mapTxn = (r) => ({
@@ -31,6 +32,7 @@ const mapTxn = (r) => ({
   payerId: r.camper_id || r.tab_id, items: mapItems(r.items), total: Number(r.total),
   method: r.method, refOf: r.ref_of, returned: r.returned, memberId: r.member_id || null,
   ts: new Date(r.created_at).getTime(), squarePaymentId: r.square_payment_id,
+  partialReturn: !r.returned && (r.items || []).some((l) => (l.returned_qty || 0) > 0),
 });
 
 // app cart line -> RPC item snapshot (snake)
@@ -213,6 +215,7 @@ export function useStore(session) {
         p_member_id: memberId,
       })),
     processReturn: (txnId) => after(supabase.rpc('process_return', { p_txn_id: txnId })),
+    processPartialReturn: (txnId, selections) => after(supabase.rpc('process_partial_return', { p_txn_id: txnId, p_selections: selections })),
   };
 
   return { db, error, api };

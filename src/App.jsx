@@ -103,7 +103,7 @@ function Shell({ session }) {
           {view === 'register' && <RegisterView db={db} api={api} week={week} toast={toast} />}
           {view === 'inventory' && <InventoryView db={db} api={api} toast={toast} />}
           {view === 'campers' && <CampersView db={db} api={api} week={week} toast={toast} />}
-          {view === 'reports' && <ReportsView db={db} week={week} toast={toast} />}
+          {view === 'reports' && <ReportsView db={db} api={api} week={week} toast={toast} />}
         </div>
       </div>
 

@@ -40,8 +40,14 @@ function ledgerFor(db, payerType, payerId) {
     .sort((a, b) => b.ts - a.ts);
 }
 
+// how much of an original sale line is still returnable
+function remainingQty(line) { return Math.max(0, line.qty - (line.returnedQty || 0)); }
+// whether a sale still has anything that can be returned
+function isReturnable(t) { return t.kind === 'sale' && !t.returned && t.items.some((l) => remainingQty(l) > 0); }
+
 export const Store = {
   money, isSized, sizeTotal, totalQty, findSize,
   weekCampers, weekTabs, weekTx, weekSales, allSales,
   outstandingTabs, lowStock, camperSpent, spentBy, ledgerFor,
+  remainingQty, isReturnable,
 };

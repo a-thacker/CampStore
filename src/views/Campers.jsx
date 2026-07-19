@@ -40,8 +40,8 @@ export function CampersView({ db, api, week, toast }) {
       Store.money(amount) + (amount < 0 ? ' adjusted on ' : ' added to ') + target.entity.name + '’s balance');
     setLoadFor(null);
   }
-  async function returnTransaction(txn) {
-    await wrap(() => api.processReturn(txn.id), 'Returned — ' + Store.money(txn.total) + ' refunded');
+  async function returnTransaction(txn, selections) {
+    await wrap(() => api.processPartialReturn(txn.id, selections), 'Return processed — refund issued');
   }
   async function cashOut(target) {
     await wrap(() => target.kind === 'tab' ? api.settleTab(target.entity.id) : api.cashOut(target.entity.id),
@@ -71,13 +71,13 @@ export function CampersView({ db, api, week, toast }) {
         <div style={{ flex: 1 }} />
         <span className="muted" style={{ fontWeight: 700, fontSize: 13 }}>{campers.length} campers</span>
         <button className="btn" onClick={() => setBulk(true)}><Icon name="users" size={17} /> Bulk add</button>
-        {week.type === 'family' && <button className="btn primary" onClick={() => setFamilyModal({ id: null })}><Icon name="tab" size={17} /> New family</button>}
-        <button className="btn" onClick={() => setEditing({ first: '', last: '', age: '', cabin: '', allowPurchase: true, allowOverBalance: false, notes: '' })}>
-          <Icon name="plus" size={18} /> Add individual
+        <button className="btn primary" onClick={() => setFamilyModal({ id: null })}><Icon name="tab" size={17} /> New family</button>
+        <button className="btn ghost" onClick={() => setEditing({ first: '', last: '', age: '', cabin: '', allowPurchase: true, allowOverBalance: false, notes: '' })} title="Rarely needed — give one camper their own individual tab">
+          <Icon name="plus" size={18} /> Add individual tab
         </button>
       </div>
 
-      {week.type === 'family' && tabs.length > 0 && (
+      {tabs.length > 0 && (
         <div style={{ marginTop: 18 }}>
           <div className="section-label">Families</div>
           <div className="tab-grid">
@@ -122,7 +122,7 @@ export function CampersView({ db, api, week, toast }) {
       )}
 
       <div style={{ marginTop: 18 }}>
-        {week.type === 'family' && <div className="section-label">Individuals (not part of a family)</div>}
+        {tabs.length > 0 && <div className="section-label">Individual tabs (not part of a family)</div>}
         <div className="card" style={{ overflow: 'hidden' }}>
           <table className="tbl">
             <thead>
@@ -163,9 +163,9 @@ export function CampersView({ db, api, week, toast }) {
               ))}
               {filtered.length === 0 && (
                 <tr><td colSpan={6}>
-                  <EmptyState icon="users" title={week.type === 'family' ? 'No solo individuals' : 'No campers yet'}
-                    sub={week.type === 'family' ? 'Everyone here is part of a family — use New Family to register one, or add campers individually or in bulk.' : 'Add campers individually or paste a roster.'}
-                    action={<button className="btn primary" onClick={() => setEditing({ first: '', last: '', age: '', cabin: '', allowPurchase: true, allowOverBalance: false, notes: '' })}><Icon name="plus" size={17} /> Add camper</button>} />
+                  <EmptyState icon="users" title={tabs.length > 0 ? 'No individual tabs' : 'No families yet'}
+                    sub={tabs.length > 0 ? 'Most people register as a family. Individual tabs are only for the rare camper who has their own.' : 'Register everyone as a family. Occasionally you can give a single camper their own individual tab.'}
+                    action={<button className="btn primary" onClick={() => setFamilyModal({ id: null })}><Icon name="tab" size={17} /> New family</button>} />
                 </td></tr>
               )}
             </tbody>
@@ -474,6 +474,7 @@ function FamilyModal({ tab, members, unassigned, onSave, onClose }) {
 
 /* ---- Purchase history + returns (campers or family tabs) ---- */
 function HistoryModal({ db, target, onReturn, onLoad, onCashOut, onClose }) {
+  const [returning, setReturning] = useState(null);
   const isTab = target.kind === 'tab';
   const e = target.entity;
   const name = isTab ? e.name : e.first + ' ' + e.last;
@@ -504,18 +505,20 @@ function HistoryModal({ db, target, onReturn, onLoad, onCashOut, onClose }) {
         {ledger.length === 0 && <EmptyState icon="receipt" title="No activity yet" sub="Purchases and deposits will show here." />}
         {ledger.map((t) => {
           const meta = kindMeta[t.kind] || kindMeta.sale;
-          const canReturn = t.kind === 'sale' && !t.returned;
+          const canReturn = Store.isReturnable(t);
+          const partial = t.kind === 'sale' && t.partialReturn && !t.returned;
           return (
             <div key={t.id} className={'hist-row' + (t.returned ? ' returned' : '')}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   <Badge kind={meta.cls}>{meta.label}</Badge>
                   {t.returned && <Badge kind="muted">Refunded</Badge>}
+                  {partial && <Badge kind="low">Partly returned</Badge>}
                   <span className="muted" style={{ fontSize: 12.5, fontWeight: 600 }}>{new Date(t.ts).toLocaleDateString([], { month: 'short', day: 'numeric' })} · {methodLabel[t.method] || t.method}</span>
                 </div>
                 {t.items.length > 0 && (
                   <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>
-                    {t.items.map((l) => Math.abs(l.qty) + '× ' + l.name + (l.sizeLabel ? ' (' + l.sizeLabel + ')' : '')).join(', ')}
+                    {t.items.map((l) => Math.abs(l.qty) + '× ' + l.name + (l.sizeLabel ? ' (' + l.sizeLabel + ')' : '') + (l.returnedQty ? ' · ' + l.returnedQty + ' returned' : '')).join(', ')}
                   </div>
                 )}
               </div>
@@ -523,8 +526,63 @@ function HistoryModal({ db, target, onReturn, onLoad, onCashOut, onClose }) {
                 <span className="tnum" style={{ fontWeight: 800, fontSize: 15, color: t.total < 0 ? 'var(--red)' : t.kind === 'deposit' ? 'var(--green-600)' : 'var(--ink)' }}>
                   {t.total < 0 ? '−' : t.kind === 'deposit' ? '+' : ''}{Store.money(Math.abs(t.total))}
                 </span>
-                {canReturn && <button className="btn sm danger" onClick={() => { if (confirm('Return this purchase? Items are restocked and ' + Store.money(t.total) + ' is refunded to ' + methodLabel[t.method] + '.')) onReturn(t); }}>Return</button>}
+                {canReturn && <button className="btn sm danger" onClick={() => setReturning(t)}>Return…</button>}
               </div>
+            </div>
+          );
+        })}
+      </div>
+      {returning && <ReturnModal txn={returning} onConfirm={(sel) => { onReturn(returning, sel); setReturning(null); }} onClose={() => setReturning(null)} />}
+    </Modal>
+  );
+}
+
+/* ---- Item-level return: pick how many of each line to send back ---- */
+function ReturnModal({ txn, onConfirm, onClose }) {
+  const lines = txn.items.map((l, index) => ({ index, l, remaining: Store.remainingQty(l) }));
+  const [qty, setQty] = useState(() => {
+    const init = {};
+    lines.forEach(({ index, remaining }) => { init[index] = remaining; }); // default: full return
+    return init;
+  });
+  const methodLabel = { balance: 'balance', cash: 'cash', card: 'card', tab: 'the family tab', deposit: 'deposit' };
+  const set = (i, v) => setQty((s) => ({ ...s, [i]: v }));
+  const refund = +lines.reduce((s, { index, l }) => s + l.unitPrice * (qty[index] || 0), 0).toFixed(2);
+  const anySelected = lines.some(({ index }) => (qty[index] || 0) > 0);
+  const allSelected = lines.every(({ index, remaining }) => (qty[index] || 0) >= remaining);
+  const selectAll = () => setQty(() => { const n = {}; lines.forEach(({ index, remaining }) => { n[index] = remaining; }); return n; });
+  const selectNone = () => setQty(() => { const n = {}; lines.forEach(({ index }) => { n[index] = 0; }); return n; });
+
+  function submit() {
+    onConfirm(lines.filter(({ index }) => (qty[index] || 0) > 0).map(({ index }) => ({ index, qty: qty[index] })));
+  }
+
+  return (
+    <Modal title="Return items" onClose={onClose}
+      footer={<><button className="btn" onClick={onClose}>Cancel</button>
+        <button className="btn danger" disabled={!anySelected} onClick={submit}>Refund {Store.money(refund)}</button></>}>
+      <div className="co-note"><Icon name="receipt" size={15} /> Pick how many of each item to return. Stock is restored and the refund goes back to <b>{methodLabel[txn.method] || txn.method}</b>.</div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+        <button className="btn sm" onClick={selectAll} disabled={allSelected}>Return all</button>
+        <button className="btn sm ghost" onClick={selectNone} disabled={!anySelected}>Clear</button>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {lines.map(({ index, l, remaining }) => {
+          const fully = remaining <= 0;
+          const q = qty[index] || 0;
+          return (
+            <div key={index} className="ret-line" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', border: '1px solid var(--line)', borderRadius: 10, opacity: fully ? .55 : 1 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{l.name}{l.sizeLabel ? ' (' + l.sizeLabel + ')' : ''}</div>
+                <div className="muted" style={{ fontSize: 12.5 }}>{Store.money(l.unitPrice)} each · bought {l.qty}{l.returnedQty ? ' · ' + l.returnedQty + ' already returned' : ''}</div>
+              </div>
+              {fully ? <Badge kind="muted">Returned</Badge> : (
+                <div className="qty-ctrl">
+                  <button onClick={() => set(index, Math.max(0, q - 1))} disabled={q <= 0}><Icon name="minus" size={15} /></button>
+                  <span className="tnum">{q}</span>
+                  <button onClick={() => set(index, Math.min(remaining, q + 1))} disabled={q >= remaining}><Icon name="plus" size={15} /></button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -559,4 +617,4 @@ function CashOutModal({ target, onConfirm, onClose }) {
   );
 }
 
-export { CamperModal, MemberModal, LoadBalanceModal, BulkModal, FamilyModal, HistoryModal, CashOutModal };
+export { CamperModal, MemberModal, LoadBalanceModal, BulkModal, FamilyModal, HistoryModal, CashOutModal, ReturnModal };

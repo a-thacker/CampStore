@@ -2,9 +2,11 @@
 import React, { useState } from 'react';
 import { Store } from '../lib/helpers.js';
 import { Icon, Badge, EmptyState } from '../components.jsx';
+import { ReturnModal } from './Campers.jsx';
 
-export function ReportsView({ db, week, toast }) {
+export function ReportsView({ db, api, week, toast }) {
   const [scope, setScope] = useState('week'); // 'week' | 'all'
+  const [returning, setReturning] = useState(null);
   const weeks = [...db.weeks].sort((a, b) => a.order - b.order);
 
   const sales = scope === 'week' ? Store.weekSales(db, week.id) : Store.allSales(db);
@@ -28,9 +30,14 @@ export function ReportsView({ db, week, toast }) {
 
   const recent = [...tx].sort((a, b) => b.ts - a.ts).slice(0, 12);
   const nameFor = (t) => {
+    if (t.payerType === 'walkup') return 'Quick sale';
     if (t.payerType === 'tab') { const x = db.tabs.find((i) => i.id === t.payerId); return x ? x.name : 'Tab'; }
     const c = db.campers.find((i) => i.id === t.payerId); return c ? c.first + ' ' + c.last : 'Camper';
   };
+  async function processReturn(txn, selections) {
+    try { await api.processPartialReturn(txn.id, selections); toast('Return processed — refund issued'); }
+    catch (e) { toast(e.message); }
+  }
   const weekName = (id) => { const w = db.weeks.find((x) => x.id === id); return w ? w.name : ''; };
   const methodLabel = { balance: 'Balance', cash: 'Cash', card: 'Card', tab: 'Tab' };
 
@@ -143,16 +150,20 @@ export function ReportsView({ db, week, toast }) {
             <div style={{ maxHeight: 360, overflowY: 'auto' }}>
               <table className="tbl">
                 <tbody>
-                  {recent.map((t) => (
+                  {recent.map((t) => {
+                    const canReturn = Store.isReturnable(t);
+                    return (
                     <tr key={t.id}>
                       <td>
-                        <div style={{ fontWeight: 700 }}>{nameFor(t)}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}><span style={{ fontWeight: 700 }}>{nameFor(t)}</span>{t.returned && <Badge kind="muted">Returned</Badge>}{t.partialReturn && !t.returned && <Badge kind="low">Partly returned</Badge>}</div>
                         <div className="muted" style={{ fontSize: 12 }}>{t.items.reduce((s, l) => s + l.qty, 0)} items{scope === 'all' ? ' · ' + weekName(t.weekId) : ''}</div>
                       </td>
                       <td><Badge kind={t.method === 'tab' ? 'tab' : t.method === 'card' ? 'merch' : 'muted'}>{methodLabel[t.method]}</Badge></td>
                       <td className="right tnum" style={{ fontWeight: 700 }}>{Store.money(t.total)}</td>
+                      <td className="right" style={{ width: 90 }}>{canReturn && <button className="btn sm danger" onClick={() => setReturning(t)}>Return…</button>}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                   {recent.length === 0 && <tr><td><div className="muted" style={{ padding: 16, fontSize: 14 }}>No transactions yet.</div></td></tr>}
                 </tbody>
               </table>
@@ -164,12 +175,14 @@ export function ReportsView({ db, week, toast }) {
       <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
         <button className="btn" onClick={() => { exportCSV(tx, db, scope === 'all'); toast('CSV exported'); }}><Icon name="download" size={17} /> Export {scope === 'week' ? 'week' : 'all'} sales (CSV)</button>
       </div>
+      {returning && <ReturnModal txn={returning} onConfirm={(sel) => { processReturn(returning, sel); setReturning(null); }} onClose={() => setReturning(null)} />}
     </div>
   );
 }
 
 function exportCSV(tx, db, includeWeek) {
   const nameFor = (t) => {
+    if (t.payerType === 'walkup') return 'Quick sale';
     if (t.payerType === 'tab') { const x = db.tabs.find((i) => i.id === t.payerId); return x ? x.name : 'Tab'; }
     const c = db.campers.find((i) => i.id === t.payerId); return c ? c.first + ' ' + c.last : 'Camper';
   };

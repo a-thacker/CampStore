@@ -107,6 +107,7 @@ export function RegisterView({ db, api, week, toast }) {
   const tabs = Store.weekTabs(db, week.id);
   const payer = useMemo(() => {
     if (!payerId) return null;
+    if (payerId === '__quick__') return { kind: 'quick', id: '__quick__', name: 'Quick sale' };
     const c = campers.find((x) => x.id === payerId);
     if (c) return { kind: 'camper', ...c };
     const t = tabs.find((x) => x.id === payerId);
@@ -202,16 +203,17 @@ export function RegisterView({ db, api, week, toast }) {
         <div className="cart-payer">
           {payer ? (
             <div className="payer-row" onClick={() => setPickOpen(true)}>
-              <Avatar name={payer.kind === 'tab' ? payer.name : payer.first + ' ' + payer.last} tab={payer.kind === 'tab'} />
+              <Avatar name={payer.kind === 'tab' ? payer.name : payer.kind === 'quick' ? 'Q S' : payer.first + ' ' + payer.last} tab={payer.kind === 'tab'} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="payer-name">
-                  {payer.kind === 'tab' ? payer.name : payer.first + ' ' + payer.last}
+                  {payer.kind === 'tab' ? payer.name : payer.kind === 'quick' ? 'Quick sale' : payer.first + ' ' + payer.last}
                   {payer.kind === 'tab' && <Badge kind="tab">{payer.mode === 'prepaid' ? 'Family · Prepaid' : 'Family Tab'}</Badge>}
+                  {payer.kind === 'quick' && <Badge kind="muted">No account</Badge>}
                 </div>
                 <div className="payer-meta tnum">
                   {payer.kind === 'tab'
                     ? (payer.mode === 'prepaid' ? 'Balance: ' : 'Owed: ') + Store.money(payer.balance)
-                    : 'Balance: ' + Store.money(payer.balance) + '  ·  ' + (payer.cabin || 'No cabin')}
+                    : payer.kind === 'quick' ? 'Cash or card · keeps inventory in sync' : 'Balance: ' + Store.money(payer.balance) + '  ·  ' + (payer.cabin || 'No cabin')}
                 </div>
               </div>
               <button className="btn ghost icon"><Icon name="chevron" size={18} /></button>
@@ -321,7 +323,14 @@ function PayerPicker({ db, week, onPick, onClose }) {
     <Modal title="Select account" onClose={onClose}>
       <Search value={q} onChange={setQ} placeholder="Search by name or cabin…" autoFocus />
       <div style={{ maxHeight: 380, overflowY: 'auto', margin: '0 -4px' }}>
-        {week.type === 'family' && ft.length > 0 && (
+        <button className="pick-row" onClick={() => onPick('__quick__')}>
+          <Avatar name="Q S" />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="pick-name">Quick sale <Badge kind="muted">No account</Badge></div>
+            <div className="pick-meta muted">Cash or card — record a sale not tied to a camper (keeps inventory accurate)</div>
+          </div>
+        </button>
+        {ft.length > 0 && (
           <>
             <div className="pick-group">Families</div>
             {ft.map((t) => (
@@ -355,8 +364,9 @@ function PayerPicker({ db, week, onPick, onClose }) {
 /* ---- checkout ---- */
 function CheckoutModal({ db, api, week, payer, member, cart, subtotal, toast, onClose, onDone }) {
   const isTab = payer.kind === 'tab';
+  const isQuick = payer.kind === 'quick';
   const prepaid = isTab && payer.mode === 'prepaid';
-  const [method, setMethod] = useState(isTab ? 'tab' : 'balance');
+  const [method, setMethod] = useState(isQuick ? 'cash' : isTab ? 'tab' : 'balance');
   const [processing, setProcessing] = useState(false);
   const cardRef = useRef(null);       // DOM node for Square card form
   const cardInst = useRef(null);      // Square card instance
@@ -365,10 +375,12 @@ function CheckoutModal({ db, api, week, payer, member, cart, subtotal, toast, on
 
   const bal = payer.balance || 0;
   const afterBal = +(bal - subtotal).toFixed(2);
-  const overBalance = ((!isTab && method === 'balance') || (prepaid && method === 'tab')) && afterBal < 0;
+  const overBalance = ((!isTab && !isQuick && method === 'balance') || (prepaid && method === 'tab')) && afterBal < 0;
   const blockedOver = overBalance && !payer.allowOverBalance;
 
-  const methods = isTab
+  const methods = isQuick
+    ? [['cash', 'Cash', 'cash'], ['card', 'Card', 'card']]
+    : isTab
     ? [['tab', prepaid ? 'Family Balance' : 'Add to Tab', prepaid ? 'wallet' : 'tab'], ['cash', 'Cash', 'cash'], ['card', 'Card', 'card']]
     : [['balance', 'Prepaid Balance', 'wallet'], ['cash', 'Cash', 'cash'], ['card', 'Card', 'card']];
 
@@ -397,11 +409,11 @@ function CheckoutModal({ db, api, week, payer, member, cart, subtotal, toast, on
       if (method === 'card') {
         if (!hasSquare) throw new Error('Square is not configured');
         if (!cardInst.current) throw new Error('Card form not ready');
-        const note = (isTab ? payer.name : payer.first + ' ' + payer.last) + ' · ' + week.name;
+        const note = (isTab ? payer.name : isQuick ? 'Quick sale' : payer.first + ' ' + payer.last) + ' · ' + week.name;
         ({ paymentId: squarePaymentId } = await chargeCard(cardInst.current, { cart, note }));
       }
       await api.recordSale({
-        weekId: week.id, payerType: payer.kind, payerId: payer.id,
+        weekId: week.id, payerType: isQuick ? 'walkup' : payer.kind, payerId: isQuick ? null : payer.id,
         items: cart, method, squarePaymentId, memberId: isTab && member ? member.id : null,
       });
       onDone();
@@ -424,11 +436,11 @@ function CheckoutModal({ db, api, week, payer, member, cart, subtotal, toast, on
     <Modal title="Checkout" onClose={processing ? () => {} : onClose} footer={footer}>
       <div className="co-summary">
         <div className="co-payer">
-          <Avatar name={isTab ? payer.name : payer.first + ' ' + payer.last} tab={isTab} />
+          <Avatar name={isTab ? payer.name : isQuick ? 'Q S' : payer.first + ' ' + payer.last} tab={isTab} />
           <div>
-            <div style={{ fontWeight: 700 }}>{isTab ? payer.name : payer.first + ' ' + payer.last}{isTab && member ? ' · for ' + member.first : ''}</div>
+            <div style={{ fontWeight: 700 }}>{isTab ? payer.name : isQuick ? 'Quick sale' : payer.first + ' ' + payer.last}{isTab && member ? ' · for ' + member.first : ''}</div>
             <div className="muted tnum" style={{ fontSize: 13 }}>
-              {isTab ? (prepaid ? 'Current balance ' : 'Current tab ') + Store.money(payer.balance) : 'Balance ' + Store.money(bal)}
+              {isTab ? (prepaid ? 'Current balance ' : 'Current tab ') + Store.money(payer.balance) : isQuick ? 'No account · inventory only' : 'Balance ' + Store.money(bal)}
             </div>
           </div>
           <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
@@ -485,7 +497,7 @@ function CheckoutModal({ db, api, week, payer, member, cart, subtotal, toast, on
         </div>
       )}
       {method === 'cash' && (
-        <div className="co-note"><Icon name="cash" size={16} /> Recorded as a cash sale.</div>
+        <div className="co-note"><Icon name="cash" size={16} /> {isQuick ? 'Recorded as a cash sale with no camper attached — inventory is still updated.' : 'Recorded as a cash sale.'}</div>
       )}
     </Modal>
   );
